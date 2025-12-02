@@ -30,7 +30,7 @@ export default function ChooseRole() {
       description: 'List your parking space and earn money from unused spots',
       icon: Plus,
       color: 'accent',
-      path: '/register-type',
+      path: '/provider-dashboard',
       features: ['List your space', 'Set your prices', 'Manage bookings'],
     },
   ];
