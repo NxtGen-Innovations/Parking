@@ -1,11 +1,14 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Card, CardContent } from '@/components/ui/card';
 import { Logo } from '@/components/Logo';
 import { useAuth } from '@/contexts/AuthContext';
-import { Search, MapPin, Star, Clock, ArrowLeft, LogOut, Filter } from 'lucide-react';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { LogOut, Map, CalendarDays, ChevronUp } from 'lucide-react';
+import ParkingMap from '@/components/ParkingMap';
+import { ParkingSpotCard } from '@/components/ParkingSpotCard';
+import { MyBookings } from '@/components/MyBookings';
+import { Input } from '@/components/ui/input';
 
 const mockParkingSpots = [
   {
@@ -18,6 +21,8 @@ const mockParkingSpots = [
     distance: '0.2 mi',
     type: 'commercial',
     available: true,
+    lat: 37.7749,
+    lng: -122.4194,
   },
   {
     id: '2',
@@ -29,6 +34,8 @@ const mockParkingSpots = [
     distance: '0.4 mi',
     type: 'private',
     available: true,
+    lat: 37.7759,
+    lng: -122.4174,
   },
   {
     id: '3',
@@ -40,6 +47,8 @@ const mockParkingSpots = [
     distance: '0.6 mi',
     type: 'commercial',
     available: true,
+    lat: 37.7739,
+    lng: -122.4214,
   },
   {
     id: '4',
@@ -51,6 +60,8 @@ const mockParkingSpots = [
     distance: '0.8 mi',
     type: 'private',
     available: false,
+    lat: 37.7729,
+    lng: -122.4154,
   },
   {
     id: '5',
@@ -62,170 +73,172 @@ const mockParkingSpots = [
     distance: '1.2 mi',
     type: 'commercial',
     available: true,
+    lat: 37.7769,
+    lng: -122.4234,
   },
 ];
+
+// For demo - in real app this would come from environment/secrets
+const MAPBOX_TOKEN = '';
 
 export default function Browse() {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
-  const [searchQuery, setSearchQuery] = useState('');
-  const [filter, setFilter] = useState<'all' | 'private' | 'commercial'>('all');
+  const [activeTab, setActiveTab] = useState('map');
+  const [selectedSpot, setSelectedSpot] = useState<typeof mockParkingSpots[0] | null>(null);
+  const [showSpotsList, setShowSpotsList] = useState(true);
+  const [mapboxToken, setMapboxToken] = useState(MAPBOX_TOKEN);
+  const [tempToken, setTempToken] = useState('');
 
   const handleLogout = () => {
     logout();
     navigate('/auth');
   };
 
-  const filteredSpots = mockParkingSpots.filter(spot => {
-    const matchesSearch = spot.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         spot.address.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesFilter = filter === 'all' || spot.type === filter;
-    return matchesSearch && matchesFilter;
-  });
+  const handleSpotSelect = (spot: typeof mockParkingSpots[0]) => {
+    setSelectedSpot(spot);
+  };
+
+  const handleBook = (spotId: string) => {
+    navigate(`/booking/${spotId}`);
+  };
 
   return (
-    <div className="min-h-screen bg-gradient-hero flex flex-col">
+    <div className="h-screen flex flex-col bg-background">
       {/* Header */}
-      <header className="p-6 flex items-center justify-between">
+      <header className="p-4 flex items-center justify-between border-b border-border bg-background/95 backdrop-blur-sm z-20">
         <Logo />
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
           <span className="text-sm text-muted-foreground hidden sm:block">
-            Hi, {user?.name}
+            {user?.name}
           </span>
           <Button variant="ghost" size="sm" onClick={handleLogout}>
             <LogOut size={18} />
-            <span className="hidden sm:inline ml-2">Logout</span>
           </Button>
         </div>
       </header>
 
-      {/* Back Button */}
-      <div className="px-6">
-        <Button 
-          variant="ghost" 
-          onClick={() => navigate('/choose-role')}
-          className="text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft size={18} className="mr-2" />
-          Back
-        </Button>
-      </div>
-
       {/* Main Content */}
-      <main className="flex-1 px-4 md:px-6 pb-12">
-        <div className="max-w-4xl mx-auto">
-          {/* Search Section */}
-          <div className="mb-8 animate-fade-up">
-            <h1 className="text-3xl font-bold text-foreground mb-2">Find Parking</h1>
-            <p className="text-muted-foreground mb-6">
-              Browse available parking spots near you
-            </p>
-            
-            <div className="flex flex-col sm:flex-row gap-3">
-              <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
-                <Input
-                  placeholder="Search by location or name..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-10"
+      <div className="flex-1 relative overflow-hidden">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
+          {/* Tab Content */}
+          <div className="flex-1 relative">
+            <TabsContent value="map" className="h-full m-0 data-[state=inactive]:hidden">
+              {/* Map Token Input (temporary until Cloud is set up) */}
+              {!mapboxToken && (
+                <div className="absolute inset-0 z-10 bg-background/95 backdrop-blur-sm flex items-center justify-center p-6">
+                  <div className="max-w-md w-full space-y-4 text-center">
+                    <Map className="h-16 w-16 mx-auto text-primary" />
+                    <h2 className="text-xl font-semibold">Enable Map View</h2>
+                    <p className="text-muted-foreground text-sm">
+                      Enter your Mapbox public token to view the map. Get one free at{' '}
+                      <a href="https://mapbox.com" target="_blank" rel="noopener noreferrer" className="text-primary underline">
+                        mapbox.com
+                      </a>
+                    </p>
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder="pk.eyJ1..."
+                        value={tempToken}
+                        onChange={(e) => setTempToken(e.target.value)}
+                      />
+                      <Button onClick={() => setMapboxToken(tempToken)} disabled={!tempToken}>
+                        Enable
+                      </Button>
+                    </div>
+                    <Button 
+                      variant="ghost" 
+                      className="text-sm"
+                      onClick={() => setActiveTab('bookings')}
+                    >
+                      Skip for now
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {/* Map */}
+              <div className="h-full">
+                <ParkingMap 
+                  spots={mockParkingSpots} 
+                  onSpotSelect={handleSpotSelect}
+                  mapboxToken={mapboxToken}
                 />
               </div>
-              <div className="flex gap-2">
-                <Button
-                  variant={filter === 'all' ? 'default' : 'outline'}
-                  onClick={() => setFilter('all')}
-                  size="sm"
+
+              {/* Bottom Spots List */}
+              <div className={`absolute bottom-0 left-0 right-0 bg-background rounded-t-3xl shadow-elevated transition-transform duration-300 ${
+                showSpotsList ? 'translate-y-0' : 'translate-y-[calc(100%-60px)]'
+              }`}>
+                <button 
+                  onClick={() => setShowSpotsList(!showSpotsList)}
+                  className="w-full py-3 flex items-center justify-center"
                 >
-                  All
-                </Button>
-                <Button
-                  variant={filter === 'private' ? 'default' : 'outline'}
-                  onClick={() => setFilter('private')}
-                  size="sm"
-                >
-                  Private
-                </Button>
-                <Button
-                  variant={filter === 'commercial' ? 'default' : 'outline'}
-                  onClick={() => setFilter('commercial')}
-                  size="sm"
-                >
-                  Commercial
-                </Button>
+                  <div className="w-12 h-1 bg-muted-foreground/30 rounded-full" />
+                  <ChevronUp className={`absolute right-4 h-5 w-5 text-muted-foreground transition-transform ${
+                    showSpotsList ? 'rotate-180' : ''
+                  }`} />
+                </button>
+                
+                <div className="px-4 pb-2">
+                  <h3 className="font-semibold text-sm mb-2">
+                    {mockParkingSpots.filter(s => s.available).length} spots nearby
+                  </h3>
+                </div>
+
+                <div className="max-h-[40vh] overflow-y-auto px-4 pb-4 space-y-3">
+                  {mockParkingSpots.map(spot => (
+                    <ParkingSpotCard
+                      key={spot.id}
+                      spot={spot}
+                      onBook={() => handleBook(spot.id)}
+                      compact
+                    />
+                  ))}
+                </div>
               </div>
-            </div>
+
+              {/* Selected Spot Detail */}
+              {selectedSpot && (
+                <div className="absolute bottom-0 left-0 right-0 bg-background rounded-t-3xl shadow-elevated p-4 animate-fade-up z-20">
+                  <button 
+                    onClick={() => setSelectedSpot(null)}
+                    className="absolute top-3 right-4 text-muted-foreground"
+                  >
+                    ✕
+                  </button>
+                  <ParkingSpotCard 
+                    spot={selectedSpot} 
+                    onBook={() => handleBook(selectedSpot.id)}
+                  />
+                </div>
+              )}
+            </TabsContent>
+
+            <TabsContent value="bookings" className="h-full m-0 overflow-y-auto data-[state=inactive]:hidden">
+              <MyBookings />
+            </TabsContent>
           </div>
 
-          {/* Results */}
-          <div className="space-y-4">
-            {filteredSpots.map((spot, index) => (
-              <Card 
-                key={spot.id}
-                className={`cursor-pointer hover:shadow-elevated transition-all duration-300 animate-fade-up ${
-                  !spot.available ? 'opacity-60' : ''
-                }`}
-                style={{ animationDelay: `${index * 50}ms` }}
-                onClick={() => spot.available && navigate(`/booking/${spot.id}`)}
-              >
-                <CardContent className="p-5">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1">
-                        <h3 className="font-semibold text-lg">{spot.title}</h3>
-                        <span className={`text-xs px-2 py-0.5 rounded-full capitalize ${
-                          spot.type === 'private' 
-                            ? 'bg-accent/10 text-accent' 
-                            : 'bg-primary/10 text-primary'
-                        }`}>
-                          {spot.type}
-                        </span>
-                        {!spot.available && (
-                          <span className="text-xs px-2 py-0.5 rounded-full bg-destructive/10 text-destructive">
-                            Full
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-1 text-muted-foreground text-sm mb-2">
-                        <MapPin size={14} />
-                        {spot.address}
-                      </div>
-                      <div className="flex items-center gap-4 text-sm">
-                        <div className="flex items-center gap-1">
-                          <Star className="h-4 w-4 fill-amber-400 text-amber-400" />
-                          <span className="font-medium">{spot.rating}</span>
-                          <span className="text-muted-foreground">({spot.reviews})</span>
-                        </div>
-                        <div className="flex items-center gap-1 text-muted-foreground">
-                          <Clock size={14} />
-                          {spot.distance} away
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-4">
-                      <div className="text-right">
-                        <p className="text-2xl font-bold text-primary">${spot.price}</p>
-                        <p className="text-xs text-muted-foreground">per hour</p>
-                      </div>
-                      {spot.available && (
-                        <Button size="sm">
-                          Book Now
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-
-          {filteredSpots.length === 0 && (
-            <div className="text-center py-12">
-              <p className="text-muted-foreground">No parking spots found matching your search.</p>
-            </div>
-          )}
-        </div>
-      </main>
+          {/* Bottom Tab Bar */}
+          <TabsList className="h-16 rounded-none border-t border-border bg-background justify-around">
+            <TabsTrigger 
+              value="map" 
+              className="flex-1 flex-col gap-1 h-full data-[state=active]:bg-transparent data-[state=active]:text-primary"
+            >
+              <Map size={20} />
+              <span className="text-xs">Find Parking</span>
+            </TabsTrigger>
+            <TabsTrigger 
+              value="bookings"
+              className="flex-1 flex-col gap-1 h-full data-[state=active]:bg-transparent data-[state=active]:text-primary"
+            >
+              <CalendarDays size={20} />
+              <span className="text-xs">My Bookings</span>
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+      </div>
     </div>
   );
 }

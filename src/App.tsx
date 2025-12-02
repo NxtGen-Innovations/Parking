@@ -11,6 +11,7 @@ import RegisterType from "./pages/RegisterType";
 import RegisterSpace from "./pages/RegisterSpace";
 import Browse from "./pages/Browse";
 import Booking from "./pages/Booking";
+import ProviderDashboard from "./pages/ProviderDashboard";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -75,6 +76,14 @@ function AppRoutes() {
         element={
           <ProtectedRoute>
             <Booking />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/provider-dashboard"
+        element={
+          <ProtectedRoute>
+            <ProviderDashboard />
           </ProtectedRoute>
         }
       />
