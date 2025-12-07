@@ -7,19 +7,30 @@ interface LogoProps {
 
 export function Logo({ size = 'md', showText = true }: LogoProps) {
   const sizes = {
-    sm: { icon: 20, text: 'text-lg' },
-    md: { icon: 28, text: 'text-2xl' },
-    lg: { icon: 36, text: 'text-3xl' },
+    sm: { icon: 22, text: 'text-xl', box: 'p-2.5' },
+    md: { icon: 32, text: 'text-3xl', box: 'p-3' },
+    lg: { icon: 42, text: 'text-4xl', box: 'p-3.5' },
   };
 
   return (
-    <div className="flex items-center gap-2">
-      <div className="bg-gradient-primary p-2 rounded-xl shadow-soft">
-        <Car size={sizes[size].icon} className="text-primary-foreground" />
+    <div className="flex items-center gap-4">
+      {/* Bigger icon box */}
+      <div
+        className={`${sizes[size].box} rounded-2xl bg-slate-800 border border-slate-700 flex items-center justify-center shadow-md`}
+      >
+        <Car
+          size={sizes[size].icon}
+          className="text-sky-400 stroke-[2.5]"  // thicker icon lines
+        />
       </div>
+
+      {/* Bigger, bolder text */}
       {showText && (
-        <span className={`font-bold ${sizes[size].text} text-foreground`}>
-          Park<span className="text-primary">Ease</span>
+        <span
+          className={`font-extrabold ${sizes[size].text} tracking-tight text-slate-100`}
+        >
+          Park
+          <span className="text-sky-400 drop-shadow-sm">Ease</span>
         </span>
       )}
     </div>
