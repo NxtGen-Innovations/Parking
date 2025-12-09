@@ -6,6 +6,24 @@ import { ArrowRight, MapPin, Clock, Shield } from 'lucide-react';
 import { useEffect } from 'react';
 import { motion } from 'framer-motion';
 
+// main.tsx (or index.tsx) — put this at the very top, BEFORE ReactDOM.createRoot(...) or root.render(...)
+if (import.meta.env.DEV) {
+  try {
+    const url = new URL(window.location.href);
+    if (url.pathname !== '/') {
+      url.pathname = '/';
+      // keep any search params if you want, otherwise clear them:
+      // url.search = ''; 
+      window.history.replaceState({}, '', url.toString());
+      // Optionally also set window.location.hash = '' if you use hash routing
+    }
+  } catch (err) {
+    // ignore malformed URL (shouldn't happen)
+    console.warn('Force-reset dev URL failed', err);
+  }
+}
+
+
 export default function Index() {
   const navigate = useNavigate();
   const { user, isLoading } = useAuth();
