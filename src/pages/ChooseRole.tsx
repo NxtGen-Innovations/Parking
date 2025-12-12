@@ -8,9 +8,52 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { Logo } from '@/components/Logo';
+// FIX: Corrected import path for AuthContext
 import { useAuth } from '@/contexts/AuthContext';
 import { Search, Plus, ArrowRight, LogOut } from 'lucide-react';
 import { motion } from 'framer-motion';
+
+// ----------------------------------------------------------------------
+// *** THEME SETUP ***
+// ----------------------------------------------------------------------
+// Path to the main background image (Adjust this path if necessary)
+import BACKGROUND_IMAGE from '../assets/background-hero.jpg'; 
+const BACKGROUND_IMAGE_URL = BACKGROUND_IMAGE; 
+
+// NEW: Path to the role-specific background images
+import DRIVER_ROLE_BG from '../assets/driver-role.png'; 
+import PARKING_ROLE_BG from '../assets/parking-role.png'; 
+
+
+// Theme Colors
+const PRIMARY_TEXT_COLOR_CLASS = 'text-slate-900';
+const SECONDARY_TEXT_COLOR_CLASS = 'text-slate-700';
+
+// Accent Colors - Note: Text inside cards remains light (white/light accent) due to the dark card overlay
+const SKY_ACCENT_COLORS = {
+    bg: 'bg-sky-500 hover:bg-sky-600',
+    text: 'text-sky-700',
+    dot: 'bg-sky-500',
+    gradient: 'from-sky-100/70 to-sky-50/50',
+    shadow: 'shadow-[0_10px_25px_rgba(56,189,248,0.25)]',
+    cardText: 'text-white', 
+    cardDescription: 'text-sky-100',
+    cardSecondary: 'text-sky-200',
+};
+
+const EMERALD_ACCENT_COLORS = {
+    bg: 'bg-emerald-600 hover:bg-emerald-700',
+    text: 'text-emerald-700',
+    dot: 'bg-emerald-600',
+    gradient: 'from-emerald-100/70 to-emerald-50/50',
+    shadow: 'shadow-[0_10px_25px_rgba(16,185,129,0.25)]',
+    cardText: 'text-white', 
+    cardDescription: 'text-emerald-100', 
+    cardSecondary: 'text-emerald-200', 
+};
+
+// ----------------------------------------------------------------------
+
 
 export default function ChooseRole() {
   const navigate = useNavigate();
@@ -28,9 +71,10 @@ export default function ChooseRole() {
       description:
         'Find and reserve secure parking near malls, markets & crowded areas.',
       icon: Search,
-      accent: 'sky',
+      accent: SKY_ACCENT_COLORS, 
       path: '/browse',
       features: ['Nearby discovery', 'Live pricing', 'Instant booking'],
+      imageUrl: DRIVER_ROLE_BG, 
     },
     {
       id: 'register',
@@ -38,32 +82,37 @@ export default function ChooseRole() {
       description:
         'Earn money by listing unused private or commercial parking spots.',
       icon: Plus,
-      accent: 'emerald',
+      accent: EMERALD_ACCENT_COLORS, 
       path: '/register-type',
       features: ['Smart listing tools', 'Price control', 'Booking management'],
+      imageUrl: PARKING_ROLE_BG, 
     },
   ];
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-50 flex flex-col relative overflow-hidden">
-      {/* Background vignette to match Index/Auth */}
-      <div className="pointer-events-none absolute inset-0">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.06),_transparent_55%)]" />
+    <div className={`min-h-screen flex flex-col relative overflow-hidden ${PRIMARY_TEXT_COLOR_CLASS}`}>
+      {/* Background Image Container */}
+      <div 
+        className="absolute inset-0 bg-cover bg-center" 
+        style={{ backgroundImage: `url(${BACKGROUND_IMAGE_URL})` }} 
+      >
+        {/* Semi-transparent overlay for text readability (Light theme) */}
+        <div className="absolute inset-0 bg-white/85 backdrop-filter backdrop-blur-sm" />
       </div>
 
-      {/* Header */}
-      <header className="relative z-20 w-full border-b border-slate-800 bg-slate-950/80 backdrop-blur">
+      {/* Header (Light theme) */}
+      <header className="relative z-20 w-full border-b border-slate-200 bg-white/90 backdrop-blur">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-4 md:px-8">
-          <Logo />
+          <Logo color="dark" />
           <div className="flex items-center gap-4">
-            <span className="hidden sm:block text-sm text-slate-400">
+            <span className={`hidden sm:block text-sm ${SECONDARY_TEXT_COLOR_CLASS}`}>
               Hi, {user?.name}
             </span>
             <Button
               variant="ghost"
               size="sm"
               onClick={handleLogout}
-              className="text-slate-300 hover:text-white"
+              className="text-slate-600 hover:bg-slate-100 hover:text-slate-900"
             >
               <LogOut size={18} />
               <span className="ml-2 hidden sm:inline">Logout</span>
@@ -74,128 +123,125 @@ export default function ChooseRole() {
 
       {/* Body */}
       <main className="relative z-10 flex-1 flex items-center justify-center px-4 py-10 md:py-14">
-        {/* Glass container like Auth/Index */}
-        <motion.div
-          className="w-full max-w-5xl rounded-[30px] border border-white/10 bg-white/5 bg-clip-padding backdrop-blur-2xl shadow-[0_18px_60px_rgba(0,0,0,0.6)] px-5 md:px-8 py-8 md:py-10"
-          initial={{ opacity: 0, y: 24 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, ease: 'easeOut' }}
-        >
-          {/* Header inside card */}
-          <div className="text-center mb-10 md:mb-12">
-            <p className="inline-flex items-center rounded-full bg-black/40 px-4 py-1.5 text-[11px] md:text-xs font-medium text-sky-300 border border-white/10 mb-4">
-              <span className="h-2 w-2 rounded-full bg-emerald-400 mr-2" />
-              Choose your ParkEase journey
-            </p>
-            <h1 className="text-3xl md:text-4xl font-bold text-slate-50 mb-2">
-              What would you like to do?
-            </h1>
-            <p className="text-slate-400 text-sm md:text-base">
-              Pick a role to get a tailored experience for drivers or providers.
-            </p>
-          </div>
+        {/* Content Wrapper (Takes place of the removed card) */}
+        <div className="w-full max-w-5xl px-5 md:px-8 py-8 md:py-10"> 
+          <motion.div
+            initial={{ opacity: 0, y: 24 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, ease: 'easeOut' }}
+          >
+            {/* Header section */}
+            <div className="text-center mb-10 md:mb-12">
+              <p className="inline-flex items-center rounded-full bg-emerald-100 px-4 py-1.5 text-[11px] md:text-xs font-medium text-emerald-800 border border-emerald-300 mb-4">
+                <span className="h-2 w-2 rounded-full bg-emerald-600 mr-2" />
+                Choose your ParkEase journey
+              </p>
+              <h1 className={`text-3xl md:text-4xl font-bold ${PRIMARY_TEXT_COLOR_CLASS} mb-2`}>
+                What would you like to do?
+              </h1>
+              <p className={`text-sm md:text-base ${SECONDARY_TEXT_COLOR_CLASS}`}>
+                Pick a role to get a tailored experience for drivers or providers.
+              </p>
+            </div>
 
-          {/* Cards */}
-          <div className="grid md:grid-cols-2 gap-7 md:gap-8">
-            {roles.map((role, index) => (
-              <motion.div
-                key={role.id}
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true, amount: 0.3 }}
-                transition={{ duration: 0.45, delay: 0.1 * index }}
-              >
-                <Card
-                  onClick={() => navigate(role.path)}
-                  className={`
-                    group cursor-pointer
-                    bg-slate-900/60 
-                    backdrop-blur-xl 
-                    border border-white/10
-                    shadow-2xl shadow-black/50
-                    transition-all duration-300
-                    hover:scale-[1.03]
-                    rounded-3xl
-                  `}
+            {/* Cards */}
+            <div className="grid md:grid-cols-2 gap-7 md:gap-8">
+              {roles.map((role, index) => (
+                <motion.div
+                  key={role.id}
+                  initial={{ opacity: 0, y: 20 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  viewport={{ once: true, amount: 0.3 }}
+                  transition={{ duration: 0.45, delay: 0.1 * index }}
                 >
-                  <CardHeader className="pb-5 pt-6 px-7 md:px-8">
-                    <div
-                      className={`
-                        w-16 h-16 rounded-2xl flex items-center justify-center mb-5
-                        bg-gradient-to-br 
-                        ${
-                          role.accent === 'sky'
-                            ? 'from-sky-500/25 to-sky-300/10'
-                            : 'from-emerald-500/25 to-emerald-300/10'
-                        }
-                        border border-white/15
-                      `}
-                    >
-                      <role.icon
-                        className={`
-                          h-8 w-8 
-                          ${
-                            role.accent === 'sky'
-                              ? 'text-sky-300'
-                              : 'text-emerald-300'
-                          }
-                        `}
-                      />
-                    </div>
-
-                    <CardTitle className="text-xl md:text-2xl text-slate-50 font-semibold">
-                      {role.title}
-                    </CardTitle>
-
-                    <CardDescription className="text-slate-400 text-sm md:text-base mt-2 leading-relaxed">
-                      {role.description}
-                    </CardDescription>
-                  </CardHeader>
-
-                  <CardContent className="px-7 md:px-8 pb-7 md:pb-8">
-                    <div className="space-y-3 mb-6">
-                      {role.features.map((feature, i) => (
-                        <div
-                          key={i}
-                          className="flex items-center gap-2 text-slate-200 text-sm"
-                        >
+                  <Card
+                    onClick={() => navigate(role.path)}
+                    className={`
+                      group cursor-pointer relative overflow-hidden
+                      ${role.imageUrl ? 'text-white' : 'bg-white/80 border border-slate-200'}
+                      backdrop-blur-xl 
+                      shadow-lg
+                      transition-all duration-300
+                      hover:scale-[1.03]
+                      rounded-3xl
+                    `}
+                  >
+                      {/* Background Image Layer */}
+                      {role.imageUrl && (
+                          <div
+                              className="absolute inset-0 bg-cover bg-center bg-no-repeat"
+                              style={{ backgroundImage: `url(${role.imageUrl})` }}
+                          >
+                              {/* Dark overlay for text contrast */}
+                              <div className="absolute inset-0 bg-black/50 group-hover:bg-black/40 transition-colors" />
+                          </div>
+                      )}
+                      
+                      <div className="relative z-10"> {/* Content wrapper for z-index */}
+                        <CardHeader className="pb-5 pt-6 px-7 md:px-8">
+                          {/* Icon container */}
                           <div
                             className={`
-                              h-2 w-2 rounded-full 
-                              ${
-                                role.accent === 'sky'
-                                  ? 'bg-sky-400'
-                                  : 'bg-emerald-400'
-                              }
+                              w-16 h-16 rounded-2xl flex items-center justify-center mb-5
+                              ${role.imageUrl ? 'bg-white/20 border-white/20' : 'bg-white border-slate-200'}
+                              ${role.accent.gradient}
                             `}
-                          />
-                          {feature}
-                        </div>
-                      ))}
-                    </div>
+                          >
+                            <role.icon
+                              className={`
+                                h-8 w-8 
+                                ${role.accent.text}
+                              `}
+                            />
+                          </div>
 
-                    <Button
-                      className={`
-                        w-full h-11 md:h-12 text-sm md:text-base rounded-xl
-                        transition-all duration-300
-                        group-hover:translate-x-1
-                        ${
-                          role.accent === 'sky'
-                            ? 'bg-sky-500 hover:bg-sky-600'
-                            : 'bg-emerald-500 hover:bg-emerald-600'
-                        }
-                        shadow-[0_10px_25px_rgba(56,189,248,0.35)]
-                      `}
-                    >
-                      Get started
-                      <ArrowRight className="ml-2 h-4 w-4 md:h-5 md:w-5" />
-                    </Button>
-                  </CardContent>
-                </Card>
-              </motion.div>
-            ))}
-          </div>
-        </motion.div>
+                          <CardTitle className={`text-xl md:text-2xl font-semibold ${role.accent.cardText}`}>
+                            {role.title}
+                          </CardTitle>
+
+                          <CardDescription className={`text-sm md:text-base mt-2 leading-relaxed ${role.accent.cardDescription}`}>
+                            {role.description}
+                          </CardDescription>
+                        </CardHeader>
+
+                        <CardContent className="px-7 md:px-8 pb-7 md:pb-8">
+                          <div className="space-y-3 mb-6">
+                            {role.features.map((feature, i) => (
+                              <div
+                                key={i}
+                                className={`flex items-center gap-2 text-sm ${role.accent.cardSecondary}`}
+                              >
+                                <div
+                                  className={`
+                                    h-2 w-2 rounded-full 
+                                    ${role.accent.dot}
+                                  `}
+                                />
+                                {feature}
+                              </div>
+                            ))}
+                          </div>
+
+                          <Button
+                            className={`
+                              w-full h-11 md:h-12 text-sm md:text-base rounded-xl
+                              transition-all duration-300
+                              group-hover:translate-x-1
+                              ${role.accent.bg}
+                              ${role.accent.shadow}
+                            `}
+                          >
+                            Get started
+                            <ArrowRight className="ml-2 h-4 w-4 md:h-5 md:w-5" />
+                          </Button>
+                        </CardContent>
+                      </div>
+                  </Card>
+                </motion.div>
+              ))}
+            </div>
+          </motion.div>
+        </div>
       </main>
     </div>
   );
