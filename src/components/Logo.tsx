@@ -1,38 +1,45 @@
 import { Car } from 'lucide-react';
 
+// FIX: Explicitly defined props interface to resolve TS errors
 interface LogoProps {
+  color?: 'light' | 'dark';
   size?: 'sm' | 'md' | 'lg';
-  showText?: boolean;
+  className?: string;
 }
 
-export function Logo({ size = 'md', showText = true }: LogoProps) {
-  const sizes = {
-    sm: { icon: 22, text: 'text-xl', box: 'p-2.5' },
-    md: { icon: 32, text: 'text-3xl', box: 'p-3' },
-    lg: { icon: 42, text: 'text-4xl', box: 'p-3.5' },
+export const Logo = ({ color = 'light', size = 'md', className = '' }: LogoProps) => {
+  const isDark = color === 'dark';
+
+  // Map size prop to CSS classes for text size
+  const sizeClasses = {
+    sm: 'text-lg',
+    md: 'text-xl',
+    lg: 'text-2xl',
+  };
+
+  // Map size prop to Icon pixel size
+  const iconSizes = {
+    sm: 16,
+    md: 20,
+    lg: 24,
   };
 
   return (
-    <div className="flex items-center gap-4">
-      {/* Bigger icon box */}
-      <div
-        className={`${sizes[size].box} rounded-2xl bg-slate-800 border border-slate-700 flex items-center justify-center shadow-md`}
+    <div className={`flex items-center gap-2 font-bold ${sizeClasses[size]} ${className}`}>
+      <div 
+        className={`
+          p-1.5 rounded-lg transition-colors
+          ${isDark ? 'bg-emerald-600 text-white' : 'bg-white text-emerald-600'}
+        `}
       >
-        <Car
-          size={sizes[size].icon}
-          className="text-sky-400 stroke-[2.5]"  // thicker icon lines
-        />
+        <Car size={iconSizes[size]} className="fill-current" />
       </div>
-
-      {/* Bigger, bolder text */}
-      {showText && (
-        <span
-          className={`font-extrabold ${sizes[size].text} tracking-tight text-slate-100`}
-        >
-          Park
-          <span className="text-sky-400 drop-shadow-sm">Ease</span>
+      <span className={`tracking-tight ${isDark ? 'text-slate-900' : 'text-white'}`}>
+        Park
+        <span className={isDark ? 'text-emerald-600' : 'text-emerald-400'}>
+          Ease
         </span>
-      )}
+      </span>
     </div>
   );
-}
+};
