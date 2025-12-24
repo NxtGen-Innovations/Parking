@@ -4,6 +4,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Logo } from '@/components/Logo';
 import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/lib/supabase'; // Import Supabase
+import { useToast } from '@/hooks/use-toast';
 import {
   LogOut,
   Plus,
@@ -17,6 +19,7 @@ import {
   Trash2,
   ToggleLeft,
   ToggleRight,
+  Loader2
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -24,81 +27,131 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 
-// Background Image Import
 import BACKGROUND_IMAGE from '../assets/background-hero.jpg';
 
-// Mock Data
-const mockMySpaces = [
-  {
-    id: '1',
-    title: 'Home Driveway',
-    address: '123 My Street, Chennai',
-    price: 50,
-    rating: 4.9,
-    reviews: 56,
-    totalBookings: 234,
-    earnings: 11700,
-    isActive: true,
-    type: 'private',
-  },
-  {
-    id: '2',
-    title: 'Office Parking Lot',
-    address: '456 Business Ave',
-    price: 80,
-    rating: 4.7,
-    reviews: 89,
-    totalBookings: 456,
-    earnings: 36480,
-    isActive: true,
-    type: 'commercial',
-  },
-  {
-    id: '3',
-    title: 'Weekend Spot',
-    address: '789 Residential Blvd',
-    price: 40,
-    rating: 4.5,
-    reviews: 23,
-    totalBookings: 67,
-    earnings: 2680,
-    isActive: false,
-    type: 'private',
-  },
-];
+// Define the shape of our Space for the frontend
+interface Space {
+  id: string;
+  title: string;
+  address: string;
+  price: number;
+  rating: number;
+  reviews: number;
+  totalBookings: number;
+  earnings: number;
+  isActive: boolean;
+  type: 'private' | 'commercial';
+}
 
 export default function ProviderDashboard() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout } = useAuth();
+  const { toast } = useToast();
 
-  // Handle pre-selection from RegisterType page
   const incomingPreselect = (location.state as any)?.preselect as 'private' | 'commercial' | undefined;
   const [preselect, setPreselect] = useState(incomingPreselect);
 
-  const [spaces, setSpaces] = useState(mockMySpaces);
+  // State for Real Data
+  const [spaces, setSpaces] = useState<Space[]>([]);
+  const [loading, setLoading] = useState(true);
 
+  // --- 1. FETCH DATA FROM SUPABASE ---
+  useEffect(() => {
+    if (incomingPreselect) setPreselect(incomingPreselect);
+    
+    const fetchSpaces = async () => {
+      if (!user) return;
+
+      try {
+        const { data, error } = await supabase
+          .from('parking_spaces')
+          .select('*')
+          .eq('owner_id', user.id)
+          .order('created_at', { ascending: false });
+
+        if (error) throw error;
+
+        // Map Database Columns (snake_case) to Frontend State (camelCase)
+        const formattedSpaces: Space[] = (data || []).map((s: any) => ({
+          id: s.id,
+          title: s.title,
+          address: `${s.address_street}, ${s.city}`, // Combine address fields
+          // Pick the first available price for display
+          price: s.price_car || s.price_bike || s.price_suv || 0,
+          isActive: s.is_active,
+          type: s.space_type,
+          // Defaults for now (until you have bookings/reviews populated)
+          rating: 5.0, 
+          reviews: 0,
+          totalBookings: 0,
+          earnings: 0 
+        }));
+
+        setSpaces(formattedSpaces);
+      } catch (err: any) {
+        console.error("Error fetching spaces:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchSpaces();
+  }, [user, incomingPreselect]);
+
+  // --- STATS CALCULATION ---
   const stats = useMemo(() => {
     const totalEarnings = spaces.reduce((s, x) => s + x.earnings, 0);
     const totalBookings = spaces.reduce((s, x) => s + x.totalBookings, 0);
     const activeSpaces = spaces.filter((s) => s.isActive).length;
-    const avgRating = spaces.reduce((s, x) => s + x.rating, 0) / Math.max(spaces.length, 1);
+    const avgRating = spaces.length > 0 
+      ? spaces.reduce((s, x) => s + x.rating, 0) / spaces.length 
+      : 0;
     return { totalEarnings, totalBookings, activeSpaces, avgRating: +avgRating.toFixed(1) };
   }, [spaces]);
-
-  useEffect(() => {
-    if (incomingPreselect) setPreselect(incomingPreselect);
-  }, [incomingPreselect]);
 
   const handleLogout = () => {
     logout();
     navigate('/auth?mode=login');
   };
 
-  const toggleSpaceActive = (id: string) => {
+  // --- 2. HANDLE TOGGLE ACTIVE ---
+  const toggleSpaceActive = async (id: string, currentStatus: boolean) => {
+    // Optimistic Update (Update UI immediately)
     setSpaces((s) => s.map((sp) => (sp.id === id ? { ...sp, isActive: !sp.isActive } : sp)));
+
+    // Database Update
+    const { error } = await supabase
+      .from('parking_spaces')
+      .update({ is_active: !currentStatus })
+      .eq('id', id);
+
+    if (error) {
+      toast({ title: "Error", description: "Could not update status.", variant: "destructive" });
+      // Revert if error
+      setSpaces((s) => s.map((sp) => (sp.id === id ? { ...sp, isActive: currentStatus } : sp)));
+    } else {
+      toast({ title: !currentStatus ? "Space Activated" : "Space Deactivated" });
+    }
+  };
+
+  // --- 3. HANDLE DELETE ---
+  const handleDelete = async (id: string) => {
+    if (!confirm("Are you sure you want to delete this listing? This cannot be undone.")) return;
+
+    const { error } = await supabase
+      .from('parking_spaces')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      toast({ title: "Error", description: "Could not delete space.", variant: "destructive" });
+    } else {
+      setSpaces((s) => s.filter((x) => x.id !== id));
+      toast({ title: "Space Deleted", description: "Listing removed successfully." });
+    }
   };
 
   const onAddClick = () => {
@@ -180,7 +233,7 @@ export default function ProviderDashboard() {
               icon={DollarSign} 
               label="Total Earnings" 
               value={`₹${stats.totalEarnings.toLocaleString()}`} 
-              trend="+12% this month"
+              trend="+0% this month"
               color="emerald"
             />
             <StatsCard 
@@ -210,106 +263,121 @@ export default function ProviderDashboard() {
               <h2 className="text-xl font-bold text-slate-800">My Listings</h2>
             </div>
 
-            <div className="grid gap-5">
-              {spaces.map((space) => (
-                <motion.div 
-                  key={space.id}
-                  layout
-                  initial={{ opacity: 0 }} 
-                  animate={{ opacity: 1 }}
-                >
-                  <Card className={`
-                    border-0 shadow-md transition-all duration-300 overflow-hidden
-                    ${space.isActive ? 'bg-white/80' : 'bg-slate-50/60 opacity-80'}
-                    backdrop-blur-sm hover:shadow-lg hover:translate-y-[-2px]
-                  `}>
-                    <CardContent className="p-6">
-                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-                        
-                        {/* LEFT: Info */}
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-3 mb-2">
-                            <h3 className="text-lg font-bold text-slate-900 truncate">{space.title}</h3>
-                            <span className={`
-                              text-[10px] px-2 py-0.5 rounded-full uppercase font-bold tracking-wider
-                              ${space.isActive 
-                                ? 'bg-emerald-100 text-emerald-700' 
-                                : 'bg-slate-200 text-slate-500'}
-                            `}>
-                              {space.isActive ? 'Active' : 'Inactive'}
-                            </span>
-                            <span className="text-[10px] px-2 py-0.5 rounded-full uppercase font-bold tracking-wider bg-blue-50 text-blue-600 border border-blue-100">
-                              {space.type}
-                            </span>
-                          </div>
-                          
-                          <div className="flex items-center gap-2 text-sm text-slate-500 mb-1">
-                            <MapPin size={14} className="text-slate-400" />
-                            {space.address}
-                          </div>
-                          
-                          <div className="flex items-center gap-1 text-xs text-slate-400 font-medium">
-                            <Star size={12} className="text-amber-400 fill-amber-400" />
-                            <span className="text-slate-700">{space.rating}</span>
-                            <span>({space.reviews} reviews)</span>
-                          </div>
-                        </div>
+            {loading ? (
+              <div className="flex justify-center py-12">
+                <Loader2 className="h-8 w-8 animate-spin text-emerald-600" />
+              </div>
+            ) : spaces.length === 0 ? (
+              <div className="text-center py-12 bg-white/50 rounded-2xl border border-dashed border-slate-300">
+                <p className="text-slate-500 mb-4">You haven't listed any spaces yet.</p>
+                <Button variant="outline" onClick={onAddClick}>List your first space</Button>
+              </div>
+            ) : (
+              <div className="grid gap-5">
+                <AnimatePresence>
+                  {spaces.map((space) => (
+                    <motion.div 
+                      key={space.id}
+                      layout
+                      initial={{ opacity: 0 }} 
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0, height: 0 }}
+                    >
+                      <Card className={`
+                        border-0 shadow-md transition-all duration-300 overflow-hidden
+                        ${space.isActive ? 'bg-white/80' : 'bg-slate-50/60 opacity-80'}
+                        backdrop-blur-sm hover:shadow-lg hover:translate-y-[-2px]
+                      `}>
+                        <CardContent className="p-6">
+                          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                            
+                            {/* LEFT: Info */}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-3 mb-2">
+                                <h3 className="text-lg font-bold text-slate-900 truncate">{space.title}</h3>
+                                <span className={`
+                                  text-[10px] px-2 py-0.5 rounded-full uppercase font-bold tracking-wider
+                                  ${space.isActive 
+                                    ? 'bg-emerald-100 text-emerald-700' 
+                                    : 'bg-slate-200 text-slate-500'}
+                                `}>
+                                  {space.isActive ? 'Active' : 'Inactive'}
+                                </span>
+                                <span className="text-[10px] px-2 py-0.5 rounded-full uppercase font-bold tracking-wider bg-blue-50 text-blue-600 border border-blue-100">
+                                  {space.type}
+                                </span>
+                              </div>
+                              
+                              <div className="flex items-center gap-2 text-sm text-slate-500 mb-1">
+                                <MapPin size={14} className="text-slate-400" />
+                                {space.address}
+                              </div>
+                              
+                              <div className="flex items-center gap-1 text-xs text-slate-400 font-medium">
+                                <Star size={12} className="text-amber-400 fill-amber-400" />
+                                <span className="text-slate-700">{space.rating}</span>
+                                <span>({space.reviews} reviews)</span>
+                              </div>
+                            </div>
 
-                        {/* MIDDLE: Stats */}
-                        <div className="flex items-center gap-8 md:gap-12 border-t md:border-t-0 md:border-l border-slate-100 pt-4 md:pt-0 md:pl-8">
-                          <div className="text-left">
-                            <div className="text-lg font-bold text-slate-900">₹{space.price}</div>
-                            <div className="text-xs text-slate-400 uppercase tracking-wide">/ hour</div>
-                          </div>
-                          <div className="text-left">
-                            <div className="text-lg font-bold text-slate-900">{space.totalBookings}</div>
-                            <div className="text-xs text-slate-400 uppercase tracking-wide">Bookings</div>
-                          </div>
-                          <div className="text-left">
-                            <div className="text-lg font-bold text-emerald-600">₹{space.earnings.toLocaleString()}</div>
-                            <div className="text-xs text-slate-400 uppercase tracking-wide">Earned</div>
-                          </div>
-                        </div>
+                            {/* MIDDLE: Stats */}
+                            <div className="flex items-center gap-8 md:gap-12 border-t md:border-t-0 md:border-l border-slate-100 pt-4 md:pt-0 md:pl-8">
+                              <div className="text-left">
+                                <div className="text-lg font-bold text-slate-900">₹{space.price}</div>
+                                <div className="text-xs text-slate-400 uppercase tracking-wide">/ hour</div>
+                              </div>
+                              <div className="text-left">
+                                <div className="text-lg font-bold text-slate-900">{space.totalBookings}</div>
+                                <div className="text-xs text-slate-400 uppercase tracking-wide">Bookings</div>
+                              </div>
+                              <div className="text-left">
+                                <div className="text-lg font-bold text-emerald-600">₹{space.earnings.toLocaleString()}</div>
+                                <div className="text-xs text-slate-400 uppercase tracking-wide">Earned</div>
+                              </div>
+                            </div>
 
-                        {/* RIGHT: Actions */}
-                        <div className="flex items-center justify-end md:border-l border-slate-100 md:pl-6">
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="icon" className="h-9 w-9 text-slate-400 hover:text-slate-900 hover:bg-slate-100">
-                                <MoreVertical size={18} />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className="w-40">
-                              <DropdownMenuItem onClick={() => toggleSpaceActive(space.id)}>
-                                {space.isActive ? (
-                                  <>
-                                    <ToggleLeft className="mr-2 h-4 w-4" /> Deactivate
-                                  </>
-                                ) : (
-                                  <>
-                                    <ToggleRight className="mr-2 h-4 w-4" /> Activate
-                                  </>
-                                )}
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => navigate(`/register-space?edit=${space.id}`)}>
-                                <Edit className="mr-2 h-4 w-4" /> Edit
-                              </DropdownMenuItem>
-                              <DropdownMenuItem 
-                                className="text-red-600 focus:text-red-600 focus:bg-red-50"
-                                onClick={() => setSpaces((s) => s.filter((x) => x.id !== space.id))}
-                              >
-                                <Trash2 className="mr-2 h-4 w-4" /> Delete
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </div>
+                            {/* RIGHT: Actions */}
+                            <div className="flex items-center justify-end md:border-l border-slate-100 md:pl-6">
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button variant="ghost" size="icon" className="h-9 w-9 text-slate-400 hover:text-slate-900 hover:bg-slate-100">
+                                    <MoreVertical size={18} />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="w-40">
+                                  <DropdownMenuItem onClick={() => toggleSpaceActive(space.id, space.isActive)}>
+                                    {space.isActive ? (
+                                      <>
+                                        <ToggleLeft className="mr-2 h-4 w-4" /> Deactivate
+                                      </>
+                                    ) : (
+                                      <>
+                                        <ToggleRight className="mr-2 h-4 w-4" /> Activate
+                                      </>
+                                    )}
+                                  </DropdownMenuItem>
+                                  {/* Note: Edit requires updating RegisterSpace to handle ID fetching */}
+                                  <DropdownMenuItem onClick={() => navigate(`/register-space?edit=${space.id}`)}>
+                                    <Edit className="mr-2 h-4 w-4" /> Edit
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem 
+                                    className="text-red-600 focus:text-red-600 focus:bg-red-50"
+                                    onClick={() => handleDelete(space.id)}
+                                  >
+                                    <Trash2 className="mr-2 h-4 w-4" /> Delete
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            </div>
 
-                      </div>
-                    </CardContent>
-                  </Card>
-                </motion.div>
-              ))}
-            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
+              </div>
+            )}
           </div>
 
         </motion.div>

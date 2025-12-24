@@ -7,16 +7,18 @@ import { useAuth } from '@/contexts/AuthContext';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css'; 
 import L from 'leaflet'; 
+// FIX: Added 'CloudRain' and 'Droplets' to this import list
 import { 
   Navigation, 
   ArrowRight,
   Loader2,
   Filter,
-  MapPin,
   Umbrella, 
+  CloudLightning, 
   CloudRain,
   ShieldCheck,
-  Droplets
+  Droplets,
+  MapPin as MapPinIcon 
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -25,17 +27,17 @@ import PARKING_1 from '../assets/parking1.jpg';
 import PARKING_2 from '../assets/image.png';
 
 // --- TOMTOM CONFIGURATION ---
+// ⚠️ REPLACE THIS WITH YOUR NEW KEY FROM THE DASHBOARD
 const TOMTOM_API_KEY = "LH8w4oyNpv19Ok0SDqxyayikvpw5DrTC";
-// Using a dark map tile for Rain Mode to reduce glare and increase contrast
+
 const LIGHT_MAP_URL = `https://api.tomtom.com/map/1/tile/basic/main/{z}/{x}/{y}.png?key=${TOMTOM_API_KEY}`;
 const DARK_MAP_URL = `https://api.tomtom.com/map/1/tile/basic/night/{z}/{x}/{y}.png?key=${TOMTOM_API_KEY}`;
 
 // --- CUSTOM ICONS ---
 
 const createParkingIcon = (price: number, isSelected: boolean, isSafeMode: boolean) => {
-  // If Rain Mode is ON: Safe spots glow Blue, Unsafe spots are dim/hidden
   const bgColor = isSafeMode ? '#3b82f6' : (isSelected ? '#10b981' : '#1e293b');
-  const glow = isSafeMode ? 'box-shadow: 0 0 15px #3b82f6, 0 0 5px white;' : 'box-shadow: 0 4px 10px rgba(0,0,0,0.3);';
+  const glow = isSafeMode ? 'box-shadow: 0 0 15px #3b82f6, 0 0 4px white;' : 'box-shadow: 0 4px 10px rgba(0,0,0,0.3);';
   
   return L.divIcon({
     className: 'custom-pin',
@@ -74,111 +76,117 @@ const createParkingIcon = (price: number, isSelected: boolean, isSafeMode: boole
   });
 };
 
+// --- NEW ATTENTION-SEEKING 3D POINTER ---
 const searchResultIcon = L.divIcon({
   className: 'search-pin',
   html: `
-    <div style="position: relative; display: flex; justify-content: center; align-items: center;">
-      <div style="
-        width: 20px;
-        height: 20px;
-        background-color: #ef4444; 
-        border-radius: 50%;
-        border: 3px solid white;
-        box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.4), 0 0 20px rgba(239, 68, 68, 0.6);
-        animation: pulse 1.5s infinite;
-      "></div>
+    <div style="position: relative; width: 50px; height: 50px; display: flex; justify-content: center; align-items: center;">
+      
       <div style="
         position: absolute;
-        bottom: -30px;
-        width: 2px;
-        height: 30px;
-        background: linear-gradient(to bottom, #ef4444, transparent);
+        width: 100%;
+        height: 100%;
+        background-color: rgba(239, 68, 68, 0.4);
+        border-radius: 50%;
+        animation: ripple 1.5s infinite ease-out;
+        z-index: 0;
       "></div>
+
+      <div style="
+        position: relative;
+        z-index: 10;
+        width: 36px;
+        height: 36px;
+        background: linear-gradient(135deg, #ef4444, #b91c1c);
+        border: 3px solid white;
+        border-radius: 50% 50% 0 50%;
+        transform: rotate(45deg);
+        box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      ">
+        <div style="
+          width: 12px;
+          height: 12px;
+          background-color: white;
+          border-radius: 50%;
+        "></div>
+      </div>
+      
+      <div style="
+        position: absolute;
+        bottom: -5px;
+        width: 20px;
+        height: 6px;
+        background-color: rgba(0,0,0,0.3);
+        border-radius: 50%;
+        filter: blur(2px);
+      "></div>
+
     </div>
     <style>
-      @keyframes pulse {
-        0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
-        70% { transform: scale(1.2); box-shadow: 0 0 0 12px rgba(239, 68, 68, 0); }
-        100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+      @keyframes ripple {
+        0% { transform: scale(0.5); opacity: 1; }
+        100% { transform: scale(2.5); opacity: 0; }
       }
     </style>
   `,
-  iconSize: [30, 30],
-  iconAnchor: [15, 15],
+  iconSize: [50, 50],
+  iconAnchor: [25, 45], // Anchored at the bottom tip
 });
 
 // --- MOCK DATA ---
 const NEARBY_SPOTS = [
-  {
-    id: '1',
-    title: 'City Center Mall (Level 3)',
-    address: 'Anna Salai, Chennai',
-    price: 40,
-    rating: 4.8,
-    distance: '2 min',
-    image: PARKING_2,
-    type: 'Commercial',
-    lat: 13.0827,
-    lng: 80.2707,
-    isFloodSafe: true, 
-  },
-  {
-    id: '2',
-    title: 'Greenways Driveway',
-    address: 'Adyar, Chennai',
-    price: 25,
-    rating: 4.5,
-    distance: '5 min',
-    image: PARKING_1,
-    type: 'Private',
-    lat: 13.0012,
-    lng: 80.2565,
-    isFloodSafe: false, 
-  },
-  {
-    id: '3',
-    title: 'Metro Station Hub',
-    address: 'Guindy, Chennai',
-    price: 30,
-    rating: 4.2,
-    distance: '8 min',
-    image: PARKING_2,
-    type: 'Commercial',
-    lat: 13.0067,
-    lng: 80.2206,
-    isFloodSafe: true, 
-  },
+  { id: '1', title: 'City Center Mall (Level 3)', address: 'Anna Salai, Chennai', price: 40, rating: 4.8, distance: '2 min', image: PARKING_2, type: 'Commercial', lat: 13.0827, lng: 80.2707, isFloodSafe: true },
+  { id: '2', title: 'Greenways Driveway', address: 'Adyar, Chennai', price: 25, rating: 4.5, distance: '5 min', image: PARKING_1, type: 'Private', lat: 13.0012, lng: 80.2565, isFloodSafe: false },
+  { id: '3', title: 'Metro Station Hub', address: 'Guindy, Chennai', price: 30, rating: 4.2, distance: '8 min', image: PARKING_2, type: 'Commercial', lat: 13.0067, lng: 80.2206, isFloodSafe: true },
 ];
 
-// --- RAIN ANIMATION COMPONENT ---
-const RainOverlay = () => {
-  // Generate random drops
-  const drops = Array.from({ length: 40 }).map((_, i) => ({
+// --- FULL SCREEN STORM INTRO ANIMATION ---
+const StormIntro = () => {
+  const drops = Array.from({ length: 100 }).map((_, i) => ({
     id: i,
     left: Math.random() * 100 + '%',
-    delay: Math.random() * 2,
-    duration: 0.5 + Math.random() * 0.5
+    delay: Math.random() * 0.5,
+    duration: 0.2 + Math.random() * 0.3
   }));
 
   return (
-    <div className="absolute inset-0 pointer-events-none z-0 overflow-hidden">
+    <motion.div 
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0, transition: { duration: 1 } }}
+      className="fixed inset-0 z-[100] bg-slate-950 flex flex-col items-center justify-center overflow-hidden"
+    >
       {drops.map((drop) => (
         <motion.div
           key={drop.id}
-          initial={{ top: -20, opacity: 0 }}
-          animate={{ top: '100%', opacity: [0, 1, 0] }}
-          transition={{ 
-            duration: drop.duration, 
-            repeat: Infinity, 
-            delay: drop.delay, 
-            ease: "linear" 
-          }}
-          className="absolute w-[1px] h-10 bg-blue-400/50"
+          initial={{ top: -100, x: 0 }}
+          animate={{ top: '120%', x: -50 }}
+          transition={{ duration: drop.duration, repeat: Infinity, delay: drop.delay, ease: "linear" }}
+          className="absolute w-[2px] h-24 bg-blue-400/60 blur-[1px]"
           style={{ left: drop.left }}
         />
       ))}
-      <div className="absolute inset-0 bg-slate-900/30 backdrop-blur-[1px] z-0" />
-    </div>
+      <motion.div
+        animate={{ opacity: [0, 0, 1, 0, 0.8, 0] }}
+        transition={{ duration: 1.5, times: [0, 0.4, 0.45, 0.5, 0.55, 1], repeat: 1 }}
+        className="absolute inset-0 bg-white z-20 mix-blend-overlay"
+      />
+      <motion.div 
+        initial={{ scale: 0.8, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        transition={{ delay: 0.5 }}
+        className="relative z-30 flex flex-col items-center"
+      >
+        <div className="bg-slate-900/50 backdrop-blur-md p-6 rounded-3xl border border-blue-500/30 shadow-[0_0_50px_rgba(59,130,246,0.5)]">
+          <CloudLightning size={64} className="text-blue-400 fill-white animate-pulse mx-auto mb-4" />
+          <h1 className="text-3xl font-black text-white tracking-tight uppercase">Activating Storm Protocol</h1>
+          <p className="text-blue-200 mt-2 text-center font-medium">Scanning for elevated safe zones...</p>
+        </div>
+      </motion.div>
+    </motion.div>
   );
 };
 
@@ -199,11 +207,21 @@ export default function Browse() {
   const [showResults, setShowResults] = useState(false);
   const [selectedSpot, setSelectedSpot] = useState<string | null>(null);
   const [sosMode, setSosMode] = useState(false);
-  
+  const [showStormIntro, setShowStormIntro] = useState(false);
   const [mapCenter, setMapCenter] = useState<[number, number]>([13.0827, 80.2707]);
   const [searchedLocation, setSearchedLocation] = useState<{lat: number, lng: number, name: string} | null>(null);
 
   const filteredSpots = NEARBY_SPOTS.filter(spot => sosMode ? spot.isFloodSafe : true);
+
+  const handleToggleRainMode = () => {
+    if (!sosMode) {
+      setShowStormIntro(true);
+      setTimeout(() => setSosMode(true), 800);
+      setTimeout(() => setShowStormIntro(false), 2500);
+    } else {
+      setSosMode(false);
+    }
+  };
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -249,9 +267,14 @@ export default function Browse() {
   };
 
   return (
-    <div className={`min-h-screen flex flex-col relative overflow-hidden font-sans transition-colors duration-700 ${sosMode ? 'bg-slate-900 text-white' : 'bg-slate-50 text-slate-900'}`}>
+    <div className={`min-h-screen flex flex-col relative overflow-hidden font-sans transition-colors duration-1000 ease-in-out ${sosMode ? 'bg-slate-950 text-blue-50' : 'bg-slate-50 text-slate-900'}`}>
       
-      {/* --- MAP --- */}
+      {/* STORM INTRO */}
+      <AnimatePresence>
+        {showStormIntro && <StormIntro />}
+      </AnimatePresence>
+
+      {/* MAP */}
       <div className="absolute inset-0 z-0">
         <MapContainer 
           center={mapCenter} 
@@ -264,11 +287,6 @@ export default function Browse() {
             attribution='&copy; TomTom'
           />
           <MapUpdater center={mapCenter} />
-
-          {/* Rain Animation Layer */}
-          <AnimatePresence>
-            {sosMode && <RainOverlay />}
-          </AnimatePresence>
 
           {filteredSpots.map((spot) => (
             <Marker 
@@ -285,15 +303,16 @@ export default function Browse() {
             />
           ))}
 
+          {/* NEW 3D POINTER MARKER */}
           {searchedLocation && (
             <Marker 
               position={[searchedLocation.lat, searchedLocation.lng]}
               icon={searchResultIcon}
             >
               <Popup autoPan={false} closeButton={false} className="font-sans">
-                <div className="text-center">
+                <div className="text-center pt-2">
                   <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Destination</div>
-                  <div className="font-bold text-sm">{searchedLocation.name}</div>
+                  <div className="font-bold text-sm text-slate-900">{searchedLocation.name}</div>
                 </div>
               </Popup>
             </Marker>
@@ -301,22 +320,22 @@ export default function Browse() {
         </MapContainer>
       </div>
 
-      {/* --- HEADER --- */}
+      {/* HEADER */}
       <header className="relative z-20 px-6 py-4 flex justify-between items-center pointer-events-none">
         <div 
-          className={`backdrop-blur-md p-2 rounded-full shadow-lg cursor-pointer pointer-events-auto transition-colors duration-500 ${sosMode ? 'bg-slate-900/80 border border-slate-700' : 'bg-white/90'}`}
+          className={`backdrop-blur-xl p-2 rounded-full shadow-lg cursor-pointer pointer-events-auto transition-all duration-500 ${sosMode ? 'bg-slate-900/60 border border-slate-700/50' : 'bg-white/90 shadow-slate-200'}`}
           onClick={() => navigate('/')}
         >
           <Logo color={sosMode ? 'light' : 'dark'} size="sm" />
         </div>
-        <div className={`backdrop-blur-md p-1.5 rounded-full shadow-lg pointer-events-auto transition-colors duration-500 ${sosMode ? 'bg-slate-900/80 border border-slate-700' : 'bg-white/90'}`}>
-          <div className={`h-8 w-8 rounded-full flex items-center justify-center text-xs font-bold border transition-colors ${sosMode ? 'bg-slate-800 text-blue-400 border-slate-600' : 'bg-slate-100 text-slate-700 border-slate-200'}`}>
+        <div className={`backdrop-blur-xl p-1.5 rounded-full shadow-lg pointer-events-auto transition-all duration-500 ${sosMode ? 'bg-slate-900/60 border border-slate-700/50' : 'bg-white/90 shadow-slate-200'}`}>
+          <div className={`h-8 w-8 rounded-full flex items-center justify-center text-xs font-bold border transition-colors ${sosMode ? 'bg-blue-900/30 text-blue-200 border-blue-500/30' : 'bg-slate-100 text-slate-700 border-slate-200'}`}>
             {user?.name?.charAt(0) || 'U'}
           </div>
         </div>
       </header>
 
-      {/* --- MAIN INTERFACE --- */}
+      {/* MAIN INTERFACE */}
       <main className="relative z-10 flex-1 flex flex-col justify-end pb-0 pointer-events-none">
         
         <motion.div 
@@ -325,46 +344,45 @@ export default function Browse() {
           animate={{ y: showResults ? 0 : -100 }}
           transition={{ type: "spring", stiffness: 50 }}
         >
-          <Card className={`border-0 shadow-2xl backdrop-blur-xl rounded-[32px] overflow-hidden transition-colors duration-500 ${sosMode ? 'bg-slate-900/80 text-white' : 'bg-white/90 text-slate-900'}`}>
+          <Card className={`border-0 shadow-2xl backdrop-blur-xl rounded-[32px] overflow-hidden transition-all duration-700 ${sosMode ? 'bg-slate-900/70 text-white shadow-blue-900/20' : 'bg-white/90 text-slate-900 shadow-slate-200/50'}`}>
             <CardContent className="p-0">
               
               {!showResults ? (
                 <div className="p-6 space-y-6">
                   
-                  {/* TITLE + ATTRACTIVE RAIN MODE TOGGLE */}
+                  {/* TITLE + TOGGLE */}
                   <div className="flex flex-col md:flex-row justify-between md:items-center gap-4">
-                    <h1 className="text-2xl font-bold tracking-tight">Where to park?</h1>
+                    <h1 className="text-2xl font-bold tracking-tight drop-shadow-sm">Where to park?</h1>
                     
-                    <button 
-                      onClick={() => setSosMode(!sosMode)}
+                    {/* --- TOGGLE WITH "NORMAL" and "FLOOD" --- */}
+                    <div 
+                      onClick={handleToggleRainMode}
                       className={`
-                        relative overflow-hidden flex items-center gap-3 px-6 py-3 rounded-2xl font-bold transition-all duration-500 transform active:scale-95 shadow-lg group
-                        ${sosMode 
-                          ? 'bg-gradient-to-br from-blue-600 to-indigo-900 text-white shadow-blue-500/50 ring-2 ring-blue-400/50' 
-                          : 'bg-white text-slate-600 border border-slate-200 hover:border-blue-300 hover:bg-blue-50'
-                        }
+                        relative w-44 h-12 rounded-full cursor-pointer transition-all duration-500 flex items-center px-1 shadow-inner
+                        ${sosMode ? 'bg-slate-800 border border-blue-500/30' : 'bg-slate-100 border border-slate-200'}
                       `}
                     >
-                      {sosMode && <div className="absolute inset-0 bg-blue-400/20 animate-pulse" />}
-                      <div className="relative flex items-center gap-2">
-                        {sosMode ? (
-                          <>
-                            <Umbrella size={20} className="fill-current animate-bounce" />
-                            <span className="text-sm">Flood Haven Active</span>
-                          </>
-                        ) : (
-                          <>
-                            <CloudRain size={20} className="text-blue-500 group-hover:scale-110 transition-transform" />
-                            <span className="text-sm">Rain Mode</span>
-                          </>
-                        )}
+                      <div className="absolute inset-0 flex justify-between px-5 items-center text-[10px] font-extrabold tracking-widest uppercase pointer-events-none select-none">
+                         <span className={sosMode ? 'text-slate-600' : 'text-slate-400'}>NORMAL</span>
+                         <span className={sosMode ? 'text-blue-400' : 'text-slate-300'}>FLOOD</span>
                       </div>
-                    </button>
+
+                      <motion.div 
+                        className={`
+                          absolute h-10 w-20 rounded-full shadow-md flex items-center justify-center gap-2 z-10
+                          ${sosMode ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}
+                        `}
+                        animate={{ x: sosMode ? '110%' : '0%' }}
+                        transition={{ type: "spring", stiffness: 400, damping: 30 }}
+                      >
+                         {sosMode ? <CloudLightning size={18} className="fill-white" /> : <CloudRain size={18} />}
+                      </motion.div>
+                    </div>
                   </div>
                   
                   <form onSubmit={handleSearch} className="relative">
-                    <div className={`relative flex items-center rounded-2xl px-4 py-4 transition-all border ${sosMode ? 'bg-slate-800/50 border-slate-700' : 'bg-slate-100 border-transparent focus-within:bg-white focus-within:border-emerald-500/50'}`}>
-                      <div className={`w-2 h-2 rounded-full mr-4 ${sosMode ? 'bg-blue-500 shadow-[0_0_10px_#3b82f6]' : 'bg-slate-900'}`} />
+                    <div className={`relative flex items-center rounded-2xl px-4 py-4 transition-all border ${sosMode ? 'bg-slate-800/60 border-slate-700/50' : 'bg-slate-100 border-transparent focus-within:bg-white focus-within:border-emerald-500/50'}`}>
+                      <div className={`w-2 h-2 rounded-full mr-4 ${sosMode ? 'bg-blue-400 shadow-[0_0_10px_#60a5fa]' : 'bg-slate-900'}`} />
                       <input 
                         type="text"
                         placeholder="Enter destination (e.g. Marina Beach)"
@@ -391,7 +409,6 @@ export default function Browse() {
                   </button>
                 </div>
               ) : (
-                // Compact Header
                 <div className="p-4 flex items-center gap-3">
                   <div 
                     className={`flex-1 rounded-2xl px-4 py-3 flex items-center gap-3 cursor-text transition-colors ${sosMode ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-900'}`}
@@ -409,7 +426,7 @@ export default function Browse() {
           </Card>
         </motion.div>
 
-        {/* Results List (Bottom Sheet) */}
+        {/* BOTTOM SHEET */}
         <AnimatePresence>
           {showResults && (
             <motion.div
@@ -417,9 +434,9 @@ export default function Browse() {
               animate={{ y: 0 }}
               exit={{ y: "100%" }}
               transition={{ type: "spring", damping: 25, stiffness: 200 }}
-              className={`rounded-t-[32px] shadow-[0_-10px_40px_rgba(0,0,0,0.2)] min-h-[45vh] max-h-[60vh] overflow-y-auto relative z-30 pointer-events-auto backdrop-blur-2xl border-t border-white/10 ${sosMode ? 'bg-slate-900/90 text-white' : 'bg-white/95 text-slate-900'}`}
+              className={`rounded-t-[32px] shadow-[0_-10px_40px_rgba(0,0,0,0.3)] min-h-[45vh] max-h-[60vh] overflow-y-auto relative z-30 pointer-events-auto backdrop-blur-3xl border-t ${sosMode ? 'bg-slate-900/80 text-white border-white/10' : 'bg-white/95 text-slate-900 border-transparent'}`}
             >
-              <div className={`sticky top-0 z-10 pt-3 pb-2 flex justify-center ${sosMode ? 'bg-slate-900/95' : 'bg-white/95'}`}>
+              <div className={`sticky top-0 z-10 pt-3 pb-2 flex justify-center ${sosMode ? 'bg-slate-900/0' : 'bg-white/0'}`}>
                 <div className={`w-12 h-1.5 rounded-full ${sosMode ? 'bg-slate-700' : 'bg-slate-200'}`} />
               </div>
 
@@ -429,7 +446,7 @@ export default function Browse() {
                      {sosMode && <ShieldCheck className="text-blue-500 fill-blue-500/20" />}
                      {sosMode ? 'Safe Haven Spots' : 'Available Spots'}
                    </h2>
-                   {sosMode && <span className="text-[10px] font-bold text-blue-300 bg-blue-900/30 px-2 py-1 rounded-md border border-blue-500/30">FLOOR 1+ ONLY</span>}
+                   {sosMode && <span className="text-[10px] font-bold text-blue-300 bg-blue-900/40 px-2 py-1 rounded-md border border-blue-500/30 shadow-[0_0_10px_rgba(59,130,246,0.2)]">FLOOR 1+ ONLY</span>}
                 </div>
                 
                 <div className="space-y-4">
@@ -441,11 +458,10 @@ export default function Browse() {
                       className={`
                         relative group flex items-center gap-4 p-4 rounded-2xl border transition-all cursor-pointer overflow-hidden
                         ${selectedSpot === spot.id 
-                          ? (sosMode ? 'bg-blue-900/20 border-blue-500 ring-1 ring-blue-500' : 'bg-emerald-50 border-emerald-500 shadow-md ring-1 ring-emerald-500') 
-                          : (sosMode ? 'bg-slate-800/50 border-slate-700 hover:border-blue-500/50' : 'bg-white border-slate-100 hover:border-emerald-200 hover:shadow-lg')}
+                          ? (sosMode ? 'bg-blue-900/30 border-blue-500/50 ring-1 ring-blue-500' : 'bg-emerald-50 border-emerald-500 shadow-md ring-1 ring-emerald-500') 
+                          : (sosMode ? 'bg-slate-800/40 border-slate-700/50 hover:bg-slate-800/60 hover:border-blue-500/30' : 'bg-white border-slate-100 hover:border-emerald-200 hover:shadow-lg')}
                       `}
                     >
-                      {/* Safety Glow for SOS Mode */}
                       {sosMode && spot.isFloodSafe && (
                         <div className="absolute inset-0 bg-blue-500/5 opacity-0 group-hover:opacity-100 transition-opacity" />
                       )}
@@ -453,7 +469,7 @@ export default function Browse() {
                       <div className="w-20 h-20 rounded-xl overflow-hidden shrink-0 shadow-sm relative z-10">
                         <img src={spot.image} alt={spot.title} className="w-full h-full object-cover" />
                         {spot.isFloodSafe && sosMode && (
-                          <div className="absolute bottom-0 left-0 right-0 bg-blue-600 text-white text-[9px] font-bold text-center py-1 tracking-wider">
+                          <div className="absolute bottom-0 left-0 right-0 bg-blue-600 text-white text-[9px] font-bold text-center py-1 tracking-wider shadow-lg">
                             SAFE
                           </div>
                         )}
@@ -473,7 +489,7 @@ export default function Browse() {
                             {spot.type}
                           </span>
                           {spot.isFloodSafe && (
-                             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-blue-500/20 text-blue-500 flex items-center gap-1 border border-blue-500/20">
+                             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-blue-500/20 text-blue-400 flex items-center gap-1 border border-blue-500/20">
                                <Umbrella size={8} /> Safe
                              </span>
                           )}
@@ -486,7 +502,7 @@ export default function Browse() {
                   ))}
                   
                   {filteredSpots.length === 0 && (
-                    <div className={`text-center py-10 rounded-3xl border border-dashed flex flex-col items-center justify-center ${sosMode ? 'bg-slate-800/30 border-slate-700 text-slate-400' : 'bg-slate-50 border-slate-200 text-slate-500'}`}>
+                    <div className={`text-center py-12 rounded-3xl border border-dashed flex flex-col items-center justify-center ${sosMode ? 'bg-slate-800/20 border-slate-700/50 text-slate-400' : 'bg-slate-50 border-slate-200 text-slate-500'}`}>
                        <div className={`p-4 rounded-full mb-3 ${sosMode ? 'bg-slate-800' : 'bg-white'}`}>
                           <Droplets size={32} className={sosMode ? 'text-blue-500' : 'text-slate-300'} />
                        </div>

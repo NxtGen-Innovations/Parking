@@ -8,25 +8,24 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Logo } from '@/components/Logo';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from '@/hooks/use-toast';
+import { supabase } from '@/lib/supabase';
 import {
   LogOut,
   Check,
-  FileText,
   Shield,
   Users,
   Crosshair,
   MapPin,
-  DollarSign,
-  Clock,
+  IndianRupee,
   ArrowLeft,
   Car,
   Bike,
-  Truck, // Using Truck icon for SUV representation
-  Umbrella, // For Flood Safety
-  AlertTriangle
+  Truck, 
+  Umbrella, 
+  AlertTriangle,
+  X // Used for removing existing images
 } from 'lucide-react';
 
-// Shared Background Image
 import BACKGROUND_IMAGE from '../assets/background-hero.jpg';
 
 type SpaceType = 'private' | 'commercial';
@@ -36,54 +35,150 @@ export default function RegisterSpace() {
   const location = useLocation();
   const [searchParams] = useSearchParams();
 
+  // 1. CHECK FOR EDIT MODE
+  const editId = searchParams.get('edit');
   const paramType = (searchParams.get('type') as SpaceType) || undefined;
-  const stateType = (location.state as any)?.type as SpaceType | undefined;
-  const initialType: SpaceType = (paramType || stateType || 'private') as SpaceType;
+  const initialType: SpaceType = (paramType || 'private') as SpaceType;
 
   const { user, logout } = useAuth();
 
   // --- FORM STATE ---
   const [providerType, setProviderType] = useState<SpaceType>(initialType);
   const [title, setTitle] = useState('');
-  const [address, setAddress] = useState('');
-  const [city, setCity] = useState('');
-  const [price, setPrice] = useState<number | ''>('');
-  const [spots, setSpots] = useState<number | ''>(1);
-  const [description, setDescription] = useState('');
   
-  // Vehicle Types
+  // Address
+  const [addrDoor, setAddrDoor] = useState('');
+  const [addrStreet, setAddrStreet] = useState('');
+  const [addrLandmark, setAddrLandmark] = useState('');
+  const [city, setCity] = useState('');
+
+  // Vehicle & Pricing
   const [vehicleTypes, setVehicleTypes] = useState<{ car: boolean; bike: boolean; suv: boolean }>({
     car: true,
-    bike: false,
+    bike: true,
     suv: false,
   });
+  const [prices, setPrices] = useState({
+    car: '',
+    bike: '',
+    suv: ''
+  });
 
-  // Flood Safety (Chennai SOS) Feature
-  const [floorLevel, setFloorLevel] = useState('0'); // 0 = Ground, 1 = 1st Floor, etc.
+  const [description, setDescription] = useState('');
+  
+  // Flood Safety
+  const [floorLevel, setFloorLevel] = useState('0');
   const [isFloodSafe, setIsFloodSafe] = useState(false);
 
-  // Commercial-specific
+  // Commercial
   const [businessName, setBusinessName] = useState('');
   const [gstNumber, setGstNumber] = useState('');
   const [operationalHours, setOperationalHours] = useState('24/7');
-  const [payoutAccount, setPayoutAccount] = useState('');
 
   // Security
   const [securityCCTV, setSecurityCCTV] = useState(true);
   const [securityGuard, setSecurityGuard] = useState(false);
   const [instantEntry, setInstantEntry] = useState(true);
 
-  const [photos, setPhotos] = useState<File[]>([]);
+  // Images
+  const [photos, setPhotos] = useState<File[]>([]); // New files to upload
+  const [existingImages, setExistingImages] = useState<string[]>([]); // URLs already in DB
+
   const [isLoading, setIsLoading] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
 
+  // 2. FETCH EXISTING DATA IF EDITING
   useEffect(() => {
-    setProviderType(initialType);
-  }, [paramType, stateType]);
+    const fetchSpaceData = async () => {
+      if (!editId || !user) return;
+
+      setIsLoading(true);
+      const { data, error } = await supabase
+        .from('parking_spaces')
+        .select('*')
+        .eq('id', editId)
+        .single();
+
+      if (error) {
+        toast({ title: 'Error', description: 'Could not load space details.', variant: 'destructive' });
+        navigate('/provider-dashboard');
+        return;
+      }
+
+      // Populate State with DB Data
+      setTitle(data.title);
+      setProviderType(data.space_type as SpaceType);
+      
+      setAddrDoor(data.address_door || '');
+      setAddrStreet(data.address_street || '');
+      setAddrLandmark(data.address_landmark || '');
+      setCity(data.city || '');
+      
+      setDescription(data.description || '');
+
+      // Pricing & Vehicles logic
+      setVehicleTypes({
+        car: data.price_car !== null,
+        bike: data.price_bike !== null,
+        suv: data.price_suv !== null,
+      });
+      setPrices({
+        car: data.price_car ? String(data.price_car) : '',
+        bike: data.price_bike ? String(data.price_bike) : '',
+        suv: data.price_suv ? String(data.price_suv) : '',
+      });
+
+      // Features
+      setSecurityCCTV(data.has_cctv);
+      setSecurityGuard(data.has_guard);
+      setInstantEntry(data.has_auto_entry);
+
+      // Flood Safety
+      setFloorLevel(data.floor_level || '0');
+      setIsFloodSafe(data.is_flood_safe);
+
+      // Commercial
+      if (data.space_type === 'commercial') {
+        setBusinessName(data.business_name || '');
+        setGstNumber(data.gst_number || '');
+        setOperationalHours(data.operational_hours || '24/7');
+      }
+
+      // Images
+      if (data.images && Array.isArray(data.images)) {
+        setExistingImages(data.images);
+      }
+
+      setIsLoading(false);
+    };
+
+    fetchSpaceData();
+  }, [editId, user, navigate]);
+
+  // Initial Type Set (Only if not editing)
+  useEffect(() => {
+    if (!editId) setProviderType(initialType);
+  }, [paramType, editId]);
 
   const handleLogout = () => {
     logout();
     navigate('/auth?mode=login');
+  };
+
+  const handlePriceChange = (type: 'car' | 'bike' | 'suv', val: string) => {
+    setPrices(prev => ({ ...prev, [type]: val }));
+  };
+
+  const getPriceDisplay = () => {
+    const activePrices = [];
+    if (vehicleTypes.bike && prices.bike) activePrices.push(Number(prices.bike));
+    if (vehicleTypes.car && prices.car) activePrices.push(Number(prices.car));
+    if (vehicleTypes.suv && prices.suv) activePrices.push(Number(prices.suv));
+    
+    if (activePrices.length === 0) return '0';
+    const min = Math.min(...activePrices);
+    const max = Math.max(...activePrices);
+    return min === max ? `₹${min}` : `₹${min} - ₹${max}`;
   };
 
   const onPhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -93,25 +188,14 @@ export default function RegisterSpace() {
     setPhotos((p) => [...p, ...arr].slice(0, 6));
   };
 
+  // Remove NEW photo (File)
   const removePhoto = (index: number) => {
     setPhotos((p) => p.filter((_, i) => i !== index));
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!title || !address || !price) {
-      toast({ title: 'Missing Fields', description: 'Please fill in all required fields.', variant: 'destructive' });
-      return;
-    }
-
-    setIsLoading(true);
-    
-    // Simulate API Call
-    setTimeout(() => {
-      setIsLoading(false);
-      setIsSuccess(true);
-      toast({ title: 'Space Registered', description: 'Your parking space is now live.' });
-    }, 1500);
+  // Remove EXISTING photo (URL)
+  const removeExistingPhoto = (index: number) => {
+    setExistingImages((p) => p.filter((_, i) => i !== index));
   };
 
   const detectCurrentLocation = () => {
@@ -119,14 +203,121 @@ export default function RegisterSpace() {
     toast({ title: 'Locating...', description: 'Getting your coordinates.' });
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        setAddress(`${pos.coords.latitude.toFixed(4)}, ${pos.coords.longitude.toFixed(4)}`);
-        toast({ title: 'Location Found', description: 'Address updated with coordinates.' });
+        setAddrStreet(`${pos.coords.latitude.toFixed(4)}, ${pos.coords.longitude.toFixed(4)}`);
+        setAddrLandmark("Detected via GPS");
+        toast({ title: 'Location Found', description: 'Coordinates filled in Street field.' });
       },
       () => toast({ title: 'Error', description: 'Could not detect location.', variant: 'destructive' })
     );
   };
 
-  // --- SUCCESS VIEW ---
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!title || !addrStreet || !city) {
+      toast({ title: 'Missing Fields', description: 'Please fill in title and address.', variant: 'destructive' });
+      return;
+    }
+    
+    const hasValidPrice = (vehicleTypes.car && prices.car) || (vehicleTypes.bike && prices.bike) || (vehicleTypes.suv && prices.suv);
+    if (!hasValidPrice) {
+      toast({ title: 'Pricing Error', description: 'Please set a price for at least one vehicle type.', variant: 'destructive' });
+      return;
+    }
+
+    if (!user) return;
+
+    setIsLoading(true);
+
+    try {
+      // 1. Upload NEW Images
+      const newImageUrls: string[] = [];
+      for (const file of photos) {
+        const fileExt = file.name.split('.').pop();
+        const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
+        const filePath = `${user.id}/${fileName}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from('space-images')
+          .upload(filePath, file);
+
+        if (uploadError) throw new Error("Failed to upload image: " + file.name);
+
+        const { data: { publicUrl } } = supabase.storage
+          .from('space-images')
+          .getPublicUrl(filePath);
+
+        newImageUrls.push(publicUrl);
+      }
+
+      // Combine Old + New Images
+      const finalImages = [...existingImages, ...newImageUrls];
+
+      // 2. Prepare Payload
+      const payload = {
+        title: title,
+        space_type: providerType,
+        is_active: true, // Default to true on edit/create
+        
+        address_door: addrDoor,
+        address_street: addrStreet,
+        address_landmark: addrLandmark,
+        city: city,
+        
+        price_car: vehicleTypes.car && prices.car ? parseFloat(prices.car) : null,
+        price_bike: vehicleTypes.bike && prices.bike ? parseFloat(prices.bike) : null,
+        price_suv: vehicleTypes.suv && prices.suv ? parseFloat(prices.suv) : null,
+
+        has_cctv: securityCCTV,
+        has_guard: securityGuard,
+        has_auto_entry: instantEntry,
+
+        floor_level: floorLevel,
+        is_flood_safe: isFloodSafe,
+
+        business_name: providerType === 'commercial' ? businessName : null,
+        gst_number: providerType === 'commercial' ? gstNumber : null,
+        operational_hours: providerType === 'commercial' ? operationalHours : null,
+
+        images: finalImages,
+        description: description || null
+      };
+
+      // 3. Insert or Update
+      if (editId) {
+        // UPDATE MODE
+        const { error } = await supabase
+          .from('parking_spaces')
+          .update(payload)
+          .eq('id', editId)
+          .eq('owner_id', user.id); // Security check
+
+        if (error) throw error;
+        toast({ title: 'Updated Successfully', description: 'Your parking space changes are saved.' });
+      } else {
+        // CREATE MODE
+        const { error } = await supabase
+          .from('parking_spaces')
+          .insert({ ...payload, owner_id: user.id });
+
+        if (error) throw error;
+        toast({ title: 'Space Registered', description: 'Your parking space is now live.' });
+      }
+
+      setIsSuccess(true);
+
+    } catch (error: any) {
+      console.error("Submission Error:", error);
+      toast({ 
+        title: 'Operation Failed', 
+        description: error.message || 'Something went wrong.', 
+        variant: 'destructive' 
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   if (isSuccess) {
     return (
       <div className="min-h-screen flex flex-col relative font-sans text-slate-900">
@@ -138,8 +329,10 @@ export default function RegisterSpace() {
                <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-6">
                   <Check className="h-10 w-10 text-emerald-600" />
                </div>
-               <h2 className="text-2xl font-bold mb-2 text-slate-900">Listing Published!</h2>
-               <p className="text-slate-600 mb-8">Your space is now visible to drivers. Get ready for your first booking.</p>
+               <h2 className="text-2xl font-bold mb-2 text-slate-900">
+                 {editId ? 'Changes Saved!' : 'Listing Published!'}
+               </h2>
+               <p className="text-slate-600 mb-8">Your dashboard has been updated.</p>
                <Button onClick={() => navigate('/provider-dashboard')} className="w-full h-12 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold">
                   Go to Dashboard
                </Button>
@@ -149,14 +342,13 @@ export default function RegisterSpace() {
     );
   }
 
-  // --- MAIN FORM VIEW ---
+  const fullAddress = [addrDoor, addrStreet, addrLandmark, city].filter(Boolean).join(', ');
+
   return (
     <div className="min-h-screen flex flex-col relative overflow-hidden font-sans text-slate-900">
-      {/* Background */}
       <div className="fixed inset-0 bg-cover bg-center z-0" style={{ backgroundImage: `url(${BACKGROUND_IMAGE})` }} />
       <div className="fixed inset-0 z-0 bg-gradient-to-b from-white/95 via-white/90 to-white/95 backdrop-blur-[2px]" />
 
-      {/* Header */}
       <header className="relative z-20 w-full border-b border-slate-200/60 bg-white/60 backdrop-blur-md sticky top-0">
         <div className="mx-auto max-w-7xl px-4 py-4 flex items-center justify-between gap-4">
           <Logo color="dark" size="md" />
@@ -176,14 +368,15 @@ export default function RegisterSpace() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.45 }}
         >
-          {/* Top Bar */}
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
              <div className="flex items-center gap-3">
                 <Button variant="ghost" size="sm" className="pl-0 hover:bg-transparent text-slate-500 hover:text-slate-800" onClick={() => navigate('/provider-dashboard')}>
                    <ArrowLeft size={18} className="mr-1" /> Back
                 </Button>
                 <div className="h-6 w-px bg-slate-300" />
-                <h1 className="text-2xl font-bold text-slate-900">Register Space</h1>
+                <h1 className="text-2xl font-bold text-slate-900">
+                  {editId ? 'Edit Listing' : 'Register Space'}
+                </h1>
                 <span className="px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs font-bold uppercase tracking-wider border border-emerald-100">
                    {providerType}
                 </span>
@@ -192,49 +385,54 @@ export default function RegisterSpace() {
 
           <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
             
-            {/* LEFT COLUMN (The Form) */}
+            {/* LEFT COLUMN (Main Form) */}
             <div className="lg:col-span-2 space-y-6">
               
-              {/* 1. Basic Details */}
+              {/* 1. Address Card */}
               <Card className="border-0 shadow-sm bg-white/60 backdrop-blur-xl border-white/50">
                 <CardContent className="p-6 space-y-6">
                   <div className="space-y-2">
                     <Label htmlFor="title" className="text-slate-700 font-semibold">Space Title</Label>
-                    <Input id="title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Spacious Driveway in Adyar" className="h-12 bg-white/80 border-slate-200 focus:border-emerald-500 focus:ring-emerald-500/20" />
+                    <Input id="title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Covered Garage in Anna Nagar" className="h-12 bg-white/80 border-slate-200 focus:border-emerald-500 focus:ring-emerald-500/20" />
                   </div>
 
-                  <div className="space-y-2">
-                    <div className="flex justify-between">
-                       <Label className="text-slate-700 font-semibold">Address</Label>
-                       <button type="button" onClick={detectCurrentLocation} className="text-xs font-bold text-emerald-600 flex items-center hover:text-emerald-700"><Crosshair size={14} className="mr-1"/> Use GPS</button>
+                  <div className="space-y-4 pt-2">
+                    <div className="flex justify-between items-center">
+                        <Label className="text-slate-700 font-semibold flex items-center gap-2"><MapPin size={16} /> Location Details</Label>
+                        <button type="button" onClick={detectCurrentLocation} className="text-xs font-bold text-emerald-600 flex items-center hover:text-emerald-700 bg-emerald-50 px-2 py-1 rounded cursor-pointer transition-colors"><Crosshair size={14} className="mr-1"/> Detect GPS</button>
                     </div>
-                    <div className="relative">
-                       <MapPin className="absolute left-3 top-3.5 text-slate-400" size={18} />
-                       <Input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Full street address..." className="pl-10 h-12 bg-white/80 border-slate-200" />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                     <div className="space-y-2">
-                        <Label className="text-slate-700 font-semibold">City</Label>
-                        <Input value={city} onChange={(e) => setCity(e.target.value)} placeholder="Chennai" className="h-12 bg-white/80 border-slate-200" />
-                     </div>
-                     <div className="space-y-2">
-                        <Label className="text-slate-700 font-semibold">Price / Hour</Label>
-                        <div className="relative">
-                           <DollarSign className="absolute left-3 top-3.5 text-slate-400" size={18} />
-                           <Input type="number" value={price} onChange={(e) => setPrice(e.target.value === '' ? '' : Number(e.target.value))} placeholder="40" className="pl-10 h-12 bg-white/80 border-slate-200 font-medium" />
+                    
+                    <div className="grid grid-cols-4 gap-4">
+                        <div className="col-span-1 space-y-2">
+                            <Label className="text-xs text-slate-500">Door / Flat No</Label>
+                            <Input value={addrDoor} onChange={(e) => setAddrDoor(e.target.value)} placeholder="No. 42" className="bg-white/80 border-slate-200" />
                         </div>
-                     </div>
+                        <div className="col-span-3 space-y-2">
+                            <Label className="text-xs text-slate-500">Street Name / Road</Label>
+                            <Input value={addrStreet} onChange={(e) => setAddrStreet(e.target.value)} placeholder="Gandhi Road, 2nd Cross St" className="bg-white/80 border-slate-200" />
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                            <Label className="text-xs text-slate-500">Landmark / Area</Label>
+                            <Input value={addrLandmark} onChange={(e) => setAddrLandmark(e.target.value)} placeholder="Near Siva Temple" className="bg-white/80 border-slate-200" />
+                        </div>
+                        <div className="space-y-2">
+                            <Label className="text-xs text-slate-500">City</Label>
+                            <Input value={city} onChange={(e) => setCity(e.target.value)} placeholder="Chennai" className="bg-white/80 border-slate-200" />
+                        </div>
+                    </div>
                   </div>
                 </CardContent>
               </Card>
 
-              {/* 2. Vehicle Types (Visual Selector) */}
+              {/* 2. Vehicles & Pricing Card */}
               <Card className="border-0 shadow-sm bg-white/60 backdrop-blur-xl border-white/50">
                  <CardContent className="p-6">
-                    <Label className="text-slate-700 font-semibold mb-4 block">Allowed Vehicles</Label>
-                    <div className="grid grid-cols-3 gap-4">
+                    <Label className="text-slate-700 font-semibold mb-4 block">Vehicles & Pricing</Label>
+                    
+                    <div className="grid grid-cols-3 gap-4 mb-6">
                        {[
                           { id: 'bike', label: 'Bike', icon: Bike },
                           { id: 'car', label: 'Car', icon: Car },
@@ -243,23 +441,65 @@ export default function RegisterSpace() {
                           <div 
                              key={v.id}
                              onClick={() => setVehicleTypes(prev => ({ ...prev, [v.id]: !prev[v.id as keyof typeof prev] }))}
-                             className={`cursor-pointer rounded-xl border-2 p-4 flex flex-col items-center justify-center gap-2 transition-all duration-200
+                             className={`cursor-pointer rounded-xl border-2 p-4 flex flex-col items-center justify-center gap-2 transition-all duration-200 relative
                                 ${vehicleTypes[v.id as keyof typeof vehicleTypes] 
-                                   ? 'border-emerald-500 bg-emerald-50 text-emerald-700' 
+                                   ? 'border-emerald-500 bg-emerald-50 text-emerald-700 shadow-sm' 
                                    : 'border-slate-100 bg-white text-slate-400 hover:border-slate-300'}
                              `}
                           >
+                             {vehicleTypes[v.id as keyof typeof vehicleTypes] && (
+                                <div className="absolute top-2 right-2 text-emerald-600"><Check size={14} strokeWidth={3} /></div>
+                             )}
                              <v.icon size={28} />
                              <span className="text-xs font-bold uppercase">{v.label}</span>
                           </div>
                        ))}
                     </div>
+
+                    <div className="space-y-3 bg-slate-50 p-4 rounded-xl border border-slate-100">
+                        <Label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 block">Set Base Price Per Hour</Label>
+                        {!vehicleTypes.bike && !vehicleTypes.car && !vehicleTypes.suv && (
+                            <div className="text-sm text-slate-400 italic text-center py-2">Select a vehicle type above to set prices.</div>
+                        )}
+                        {vehicleTypes.bike && (
+                            <div className="flex items-center gap-3">
+                                <div className="w-8 flex justify-center text-slate-500"><Bike size={20} /></div>
+                                <div className="text-sm font-medium text-slate-700 w-20">Bike</div>
+                                <div className="relative flex-1">
+                                    <IndianRupee className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                                    <Input type="number" placeholder="20" className="pl-8 h-9 bg-white" value={prices.bike} onChange={(e) => handlePriceChange('bike', e.target.value)} />
+                                </div>
+                                <span className="text-xs text-slate-400">/hr</span>
+                            </div>
+                        )}
+                        {vehicleTypes.car && (
+                            <div className="flex items-center gap-3">
+                                <div className="w-8 flex justify-center text-slate-500"><Car size={20} /></div>
+                                <div className="text-sm font-medium text-slate-700 w-20">Car</div>
+                                <div className="relative flex-1">
+                                    <IndianRupee className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                                    <Input type="number" placeholder="40" className="pl-8 h-9 bg-white" value={prices.car} onChange={(e) => handlePriceChange('car', e.target.value)} />
+                                </div>
+                                <span className="text-xs text-slate-400">/hr</span>
+                            </div>
+                        )}
+                        {vehicleTypes.suv && (
+                            <div className="flex items-center gap-3">
+                                <div className="w-8 flex justify-center text-slate-500"><Truck size={20} /></div>
+                                <div className="text-sm font-medium text-slate-700 w-20">SUV / Van</div>
+                                <div className="relative flex-1">
+                                    <IndianRupee className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                                    <Input type="number" placeholder="60" className="pl-8 h-9 bg-white" value={prices.suv} onChange={(e) => handlePriceChange('suv', e.target.value)} />
+                                </div>
+                                <span className="text-xs text-slate-400">/hr</span>
+                            </div>
+                        )}
+                    </div>
                  </CardContent>
               </Card>
 
-              {/* 3. NEW FEATURE: FLOOD HAVEN (SOS Mode) */}
+              {/* 3. Flood Safety Card (RESTORED HERE) */}
               <Card className="border-0 shadow-md bg-blue-50/50 border-blue-100 relative overflow-hidden">
-                 {/* Decorative background blob */}
                  <div className="absolute -right-10 -top-10 w-40 h-40 bg-blue-200/30 rounded-full blur-3xl pointer-events-none" />
                  
                  <CardContent className="p-6 space-y-4 relative z-10">
@@ -309,7 +549,7 @@ export default function RegisterSpace() {
                  </CardContent>
               </Card>
 
-              {/* 4. Photos */}
+              {/* 4. Photos Card */}
               <Card className="border-0 shadow-sm bg-white/60 backdrop-blur-xl border-white/50">
                  <CardContent className="p-6">
                     <Label className="text-slate-700 font-semibold mb-3 block">Photos</Label>
@@ -318,8 +558,20 @@ export default function RegisterSpace() {
                           <span className="text-xs font-bold">Add Photo</span>
                           <input type="file" accept="image/*" multiple onChange={onPhotoSelect} className="hidden" />
                        </label>
+                       
+                       {/* Existing Images from DB */}
+                       {existingImages.map((url, idx) => (
+                          <div key={`existing-${idx}`} className="w-28 h-24 rounded-xl overflow-hidden relative shadow-sm group">
+                             <img src={url} alt="existing" className="w-full h-full object-cover" />
+                             <button type="button" onClick={() => removeExistingPhoto(idx)} className="absolute top-1 right-1 bg-white text-red-500 rounded-full p-1 shadow-md opacity-0 group-hover:opacity-100 transition-opacity">
+                                <X size={12} />
+                             </button>
+                          </div>
+                       ))}
+
+                       {/* New Uploads */}
                        {photos.map((f, idx) => (
-                          <div key={idx} className="w-28 h-24 rounded-xl overflow-hidden relative shadow-sm group">
+                          <div key={`new-${idx}`} className="w-28 h-24 rounded-xl overflow-hidden relative shadow-sm group border-2 border-emerald-400">
                              <img src={URL.createObjectURL(f)} alt="preview" className="w-full h-full object-cover" />
                              <button type="button" onClick={() => removePhoto(idx)} className="absolute top-1 right-1 bg-white text-red-500 rounded-full p-1 shadow-md opacity-0 group-hover:opacity-100 transition-opacity">
                                 <LogOut size={12} />
@@ -333,21 +585,22 @@ export default function RegisterSpace() {
 
             {/* RIGHT COLUMN (Sticky Sidebar) */}
             <div className="lg:col-span-1 space-y-6 sticky top-24">
-               {/* Preview */}
+               {/* Preview Card */}
                <Card className="border-0 shadow-lg bg-slate-900 text-white overflow-hidden rounded-2xl">
                   <div className="h-2 bg-gradient-to-r from-emerald-500 to-teal-400" />
                   <div className="p-5">
                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Live Preview</h3>
-                     <div className="space-y-1 mb-4">
+                     <div className="space-y-3 mb-4">
                         <div className="text-xl font-bold truncate leading-tight">{title || 'Your Title Here'}</div>
-                        <div className="text-sm text-slate-400 truncate flex items-center gap-1">
-                           <MapPin size={12} /> {address || 'Address...'}
+                        <div className="text-sm text-slate-400 flex items-start gap-2">
+                           <MapPin size={14} className="mt-0.5 shrink-0" /> 
+                           <span className="line-clamp-2">{fullAddress || 'Address details will appear here...'}</span>
                         </div>
                      </div>
                      <div className="flex items-center justify-between pt-4 border-t border-slate-800">
                         <div className="flex flex-col">
-                           <span className="text-xs text-slate-500">Earnings</span>
-                           <span className="text-2xl font-bold text-emerald-400">₹{price || 0}<span className="text-sm text-slate-500 font-normal">/hr</span></span>
+                           <span className="text-xs text-slate-500">Earnings Range</span>
+                           <span className="text-xl font-bold text-emerald-400">{getPriceDisplay()}<span className="text-sm text-slate-500 font-normal">/hr</span></span>
                         </div>
                         {isFloodSafe && (
                            <div className="bg-blue-600/20 text-blue-400 px-2 py-1 rounded text-xs font-bold border border-blue-500/30 flex items-center gap-1">
@@ -358,7 +611,7 @@ export default function RegisterSpace() {
                   </div>
                </Card>
 
-               {/* Commercial Fields */}
+               {/* Commercial Info (Conditional) */}
                {providerType === 'commercial' && (
                  <Card className="border-0 shadow-sm bg-white/60">
                     <CardContent className="p-5 space-y-3">
@@ -370,7 +623,7 @@ export default function RegisterSpace() {
                  </Card>
                )}
 
-               {/* Features */}
+               {/* Amenities Card */}
                <Card className="border-0 shadow-sm bg-white/60">
                   <CardContent className="p-5">
                      <h3 className="font-bold text-slate-800 mb-3">Amenities</h3>
@@ -392,11 +645,11 @@ export default function RegisterSpace() {
                </Card>
 
                <Button 
-                 type="submit" 
-                 disabled={isLoading}
-                 className="w-full h-14 text-lg font-bold rounded-xl bg-slate-900 hover:bg-slate-800 text-white shadow-xl shadow-slate-900/20 transition-all hover:scale-[1.02]"
+                  type="submit" 
+                  disabled={isLoading}
+                  className="w-full h-14 text-lg font-bold rounded-xl bg-slate-900 hover:bg-slate-800 text-white shadow-xl shadow-slate-900/20 transition-all hover:scale-[1.02]"
                >
-                  {isLoading ? 'Publishing...' : 'Publish Listing'}
+                  {isLoading ? 'Saving...' : editId ? 'Update Listing' : 'Publish Listing'}
                </Button>
             </div>
 

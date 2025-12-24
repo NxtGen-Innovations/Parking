@@ -42,11 +42,15 @@ const INPUT_COLOR_CLASS = 'bg-white border-slate-300 text-slate-900 placeholder:
 export default function Auth() {
   const [searchParams] = useSearchParams();
   const [isLogin, setIsLogin] = useState(true);
+  
+  // Form State
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
+  
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  
   const { login, signup } = useAuth();
   const navigate = useNavigate();
 
@@ -66,23 +70,28 @@ export default function Auth() {
 
     try {
       if (isLogin) {
+        // --- LOGIN FLOW ---
         await login(email, password);
         toast({
           title: 'Welcome back!',
           description: 'Successfully logged in.',
         });
+        navigate('/choose-role');
       } else {
+        // --- SIGNUP FLOW ---
         await signup(email, password, name);
         toast({
           title: 'Account created!',
-          description: 'Welcome to ParkEase.',
+          description: 'Your account has been created successfully. Please sign in.',
         });
+        // Switch to login mode automatically so user can sign in
+        setIsLogin(true);
       }
-      navigate('/choose-role');
-    } catch (error) {
+    } catch (error: any) {
+      console.error("Auth Error:", error);
       toast({
-        title: 'Error',
-        description: 'Something went wrong. Please try again.',
+        title: 'Authentication Failed',
+        description: error.message || 'Something went wrong. Please check your credentials.',
         variant: 'destructive',
       });
     } finally {
@@ -90,18 +99,18 @@ export default function Auth() {
     }
   };
 
-  // Dummy handlers for social auth for now
+  // Dummy handlers for social auth
   const handleGoogle = () => {
     toast({
       title: 'Google sign in',
-      description: 'Integrate Google OAuth here.',
+      description: 'Social login requires additional Supabase configuration.',
     });
   };
 
   const handleApple = () => {
     toast({
       title: 'Apple sign in',
-      description: 'Integrate Apple Sign In here.',
+      description: 'Social login requires additional Supabase configuration.',
     });
   };
 
@@ -113,11 +122,10 @@ export default function Auth() {
         className="absolute inset-0 bg-cover bg-center" 
         style={{ backgroundImage: `url(${BACKGROUND_IMAGE_URL})` }} 
       >
-        {/* Semi-transparent overlay for text readability (Light theme) */}
         <div className="absolute inset-0 bg-white/85 backdrop-filter backdrop-blur-sm" />
       </div>
 
-      {/* Header (Changed from dark/slate to light/white) */}
+      {/* Header */}
       <header className="relative z-20 w-full border-b border-slate-200 bg-white/90 backdrop-blur">
         <div className="mx-auto flex max-w-7xl items-center justify-start px-4 py-4 md:px-8">
           <Logo color="dark" />
@@ -126,14 +134,13 @@ export default function Auth() {
 
       {/* Main Content */}
       <main className="relative z-10 flex-1 flex items-center justify-center px-4 py-10 md:py-16">
-        {/* Outer container (Light white/glass card effect) */}
         <motion.div
           className={`w-full max-w-5xl rounded-[30px] border border-slate-200 ${CARD_COLOR_CLASS} overflow-hidden flex flex-col md:flex-row shadow-[0_18px_60px_rgba(0,0,0,0.15)]`}
           initial={{ opacity: 0, y: 24 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6, ease: 'easeOut' }}
         >
-          {/* Left: intro / marketing panel (Light background with emerald accent) */}
+          {/* Left: Intro / Marketing Panel */}
           <div className="hidden md:flex flex-1 flex-col justify-between border-r border-slate-200 bg-emerald-50/50 px-8 py-10">
             <div className="space-y-6">
               <p className="inline-flex items-center rounded-full bg-emerald-100 px-4 py-1.5 text-[11px] font-medium text-emerald-800 border border-emerald-300">
@@ -173,7 +180,7 @@ export default function Auth() {
             </p>
           </div>
 
-          {/* Right: auth card (Clean white panel) */}
+          {/* Right: Auth Card */}
           <motion.div
             className="flex-1 flex items-center justify-center px-4 py-8 md:px-8 md:py-10 bg-white/70"
             initial={{ opacity: 0, y: 16 }}
@@ -193,30 +200,28 @@ export default function Auth() {
               </CardHeader>
 
               <CardContent className="pt-2 pb-8 px-0">
-                {/* Social auth on top */}
+                {/* Social Auth Buttons */}
                 {!isLogin && (
                   <div className="mb-6 space-y-3">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <Button
                         type="button"
                         variant="outline"
-                        // FIX: Added hover:text-slate-900 to keep text visible on hover
-                        className="h-11 rounded-xl border-slate-300 bg-white text-slate-900 hover:bg-slate-50/80 hover:text-slate-900 flex items-center justify-center text-sm font-medium"
+                        className="h-11 rounded-xl border-slate-300 bg-white text-slate-900 hover:bg-slate-50/80 flex items-center justify-center text-sm font-medium"
                         onClick={handleGoogle}
                       >
                         <Chrome className="mr-2 h-5 w-5 text-emerald-600" />
-                        Continue with Google
+                        Google
                       </Button>
 
                       <Button
                         type="button"
                         variant="outline"
-                        // FIX: Added hover:text-slate-900 to keep text visible on hover
-                        className="h-11 rounded-xl border-slate-300 bg-white text-slate-900 hover:bg-slate-50/80 hover:text-slate-900 flex items-center justify-center text-sm font-medium"
+                        className="h-11 rounded-xl border-slate-300 bg-white text-slate-900 hover:bg-slate-50/80 flex items-center justify-center text-sm font-medium"
                         onClick={handleApple}
                       >
                         <Apple className="mr-2 h-5 w-5 text-slate-900" /> 
-                        Continue with Apple
+                        Apple
                       </Button>
                     </div>
 
@@ -229,6 +234,7 @@ export default function Auth() {
                 )}
 
                 <form onSubmit={handleSubmit} className="space-y-5">
+                  {/* Name Field (Only for Signup) */}
                   {!isLogin && (
                     <div className="space-y-2">
                       <Label htmlFor="name" className={PRIMARY_TEXT_COLOR_CLASS}>
@@ -249,6 +255,7 @@ export default function Auth() {
                     </div>
                   )}
 
+                  {/* Email Field */}
                   <div className="space-y-2">
                     <Label htmlFor="email" className={PRIMARY_TEXT_COLOR_CLASS}>
                       Email
@@ -267,6 +274,7 @@ export default function Auth() {
                     </div>
                   </div>
 
+                  {/* Password Field */}
                   <div className="space-y-2">
                     <Label htmlFor="password" className={PRIMARY_TEXT_COLOR_CLASS}>
                       Password
@@ -292,6 +300,7 @@ export default function Auth() {
                     </div>
                   </div>
 
+                  {/* Submit Button */}
                   <Button
                     type="submit"
                     className={`w-full h-11 mt-1 text-base ${ACCENT_COLOR_CLASS} rounded-xl shadow-[0_10px_25px_rgba(16,185,129,0.4)]`}
@@ -305,7 +314,7 @@ export default function Auth() {
                   </Button>
                 </form>
 
-                {/* Switch between login <-> signup */}
+                {/* Switch Login/Signup Toggle */}
                 <div className="mt-6 text-center">
                   <p className={SECONDARY_TEXT_COLOR_CLASS}>
                     {isLogin ? "Don't have an account?" : 'Already have an account?'}
