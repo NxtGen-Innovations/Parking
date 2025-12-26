@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Logo } from '@/components/Logo';
 import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/lib/supabase'; // Import Supabase
+import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import {
   LogOut,
@@ -47,12 +47,8 @@ interface Space {
 
 export default function ProviderDashboard() {
   const navigate = useNavigate();
-  const location = useLocation();
   const { user, logout } = useAuth();
   const { toast } = useToast();
-
-  const incomingPreselect = (location.state as any)?.preselect as 'private' | 'commercial' | undefined;
-  const [preselect, setPreselect] = useState(incomingPreselect);
 
   // State for Real Data
   const [spaces, setSpaces] = useState<Space[]>([]);
@@ -60,8 +56,6 @@ export default function ProviderDashboard() {
 
   // --- 1. FETCH DATA FROM SUPABASE ---
   useEffect(() => {
-    if (incomingPreselect) setPreselect(incomingPreselect);
-    
     const fetchSpaces = async () => {
       if (!user) return;
 
@@ -79,11 +73,11 @@ export default function ProviderDashboard() {
           id: s.id,
           title: s.title,
           address: `${s.address_street}, ${s.city}`, // Combine address fields
-          // Pick the first available price for display
+          // Pick the first available price for display priority
           price: s.price_car || s.price_bike || s.price_suv || 0,
           isActive: s.is_active,
           type: s.space_type,
-          // Defaults for now (until you have bookings/reviews populated)
+          // Defaults for now (until bookings/reviews tables are populated)
           rating: 5.0, 
           reviews: 0,
           totalBookings: 0,
@@ -93,13 +87,14 @@ export default function ProviderDashboard() {
         setSpaces(formattedSpaces);
       } catch (err: any) {
         console.error("Error fetching spaces:", err);
+        toast({ title: "Error", description: "Failed to load spaces.", variant: "destructive" });
       } finally {
         setLoading(false);
       }
     };
 
     fetchSpaces();
-  }, [user, incomingPreselect]);
+  }, [user, toast]);
 
   // --- STATS CALCULATION ---
   const stats = useMemo(() => {
@@ -154,15 +149,6 @@ export default function ProviderDashboard() {
     }
   };
 
-  const onAddClick = () => {
-    if (preselect) {
-      navigate(`/register-space?type=${preselect}`);
-      setPreselect(undefined);
-      return;
-    }
-    navigate('/register-type');
-  };
-
   return (
     <div className="min-h-screen flex flex-col relative overflow-hidden font-sans text-slate-900">
       
@@ -211,14 +197,8 @@ export default function ProviderDashboard() {
             </div>
 
             <div className="flex items-center gap-3">
-              {preselect && (
-                <div className="hidden sm:inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700 border border-emerald-200">
-                  <span>Adding:</span>
-                  <span className="capitalize">{preselect} Space</span>
-                </div>
-              )}
               <Button 
-                onClick={onAddClick} 
+                onClick={() => navigate('/register-space')} 
                 className="rounded-full bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg shadow-emerald-600/20 px-6"
               >
                 <Plus className="mr-2 h-4 w-4" />
@@ -270,7 +250,7 @@ export default function ProviderDashboard() {
             ) : spaces.length === 0 ? (
               <div className="text-center py-12 bg-white/50 rounded-2xl border border-dashed border-slate-300">
                 <p className="text-slate-500 mb-4">You haven't listed any spaces yet.</p>
-                <Button variant="outline" onClick={onAddClick}>List your first space</Button>
+                <Button variant="outline" onClick={() => navigate('/register-space')}>List your first space</Button>
               </div>
             ) : (
               <div className="grid gap-5">
@@ -356,7 +336,6 @@ export default function ProviderDashboard() {
                                       </>
                                     )}
                                   </DropdownMenuItem>
-                                  {/* Note: Edit requires updating RegisterSpace to handle ID fetching */}
                                   <DropdownMenuItem onClick={() => navigate(`/register-space?edit=${space.id}`)}>
                                     <Edit className="mr-2 h-4 w-4" /> Edit
                                   </DropdownMenuItem>

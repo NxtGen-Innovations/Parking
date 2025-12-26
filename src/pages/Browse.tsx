@@ -1,13 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Logo } from '@/components/Logo';
 import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/lib/supabase'; // Import Supabase
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css'; 
 import L from 'leaflet'; 
-// FIX: Added 'CloudRain' and 'Droplets' to this import list
 import { 
   Navigation, 
   ArrowRight,
@@ -17,24 +17,16 @@ import {
   CloudLightning, 
   CloudRain,
   ShieldCheck,
-  Droplets,
-  MapPin as MapPinIcon 
+  Droplets
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-// --- IMAGES ---
-import PARKING_1 from '../assets/parking1.jpg'; 
-import PARKING_2 from '../assets/image.png';
-
 // --- TOMTOM CONFIGURATION ---
-// ⚠️ REPLACE THIS WITH YOUR NEW KEY FROM THE DASHBOARD
-const TOMTOM_API_KEY = "LH8w4oyNpv19Ok0SDqxyayikvpw5DrTC";
-
+const TOMTOM_API_KEY = "LH8w4oyNpv19Ok0SDqxyayikvpw5DrTC"; 
 const LIGHT_MAP_URL = `https://api.tomtom.com/map/1/tile/basic/main/{z}/{x}/{y}.png?key=${TOMTOM_API_KEY}`;
 const DARK_MAP_URL = `https://api.tomtom.com/map/1/tile/basic/night/{z}/{x}/{y}.png?key=${TOMTOM_API_KEY}`;
 
 // --- CUSTOM ICONS ---
-
 const createParkingIcon = (price: number, isSelected: boolean, isSafeMode: boolean) => {
   const bgColor = isSafeMode ? '#3b82f6' : (isSelected ? '#10b981' : '#1e293b');
   const glow = isSafeMode ? 'box-shadow: 0 0 15px #3b82f6, 0 0 4px white;' : 'box-shadow: 0 4px 10px rgba(0,0,0,0.3);';
@@ -76,74 +68,41 @@ const createParkingIcon = (price: number, isSelected: boolean, isSafeMode: boole
   });
 };
 
-// --- NEW ATTENTION-SEEKING 3D POINTER ---
 const searchResultIcon = L.divIcon({
   className: 'search-pin',
   html: `
     <div style="position: relative; width: 50px; height: 50px; display: flex; justify-content: center; align-items: center;">
-      
-      <div style="
-        position: absolute;
-        width: 100%;
-        height: 100%;
-        background-color: rgba(239, 68, 68, 0.4);
-        border-radius: 50%;
-        animation: ripple 1.5s infinite ease-out;
-        z-index: 0;
-      "></div>
-
-      <div style="
-        position: relative;
-        z-index: 10;
-        width: 36px;
-        height: 36px;
-        background: linear-gradient(135deg, #ef4444, #b91c1c);
-        border: 3px solid white;
-        border-radius: 50% 50% 0 50%;
-        transform: rotate(45deg);
-        box-shadow: 0 10px 25px rgba(0,0,0,0.5);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-      ">
-        <div style="
-          width: 12px;
-          height: 12px;
-          background-color: white;
-          border-radius: 50%;
-        "></div>
+      <div style="position: absolute; width: 100%; height: 100%; background-color: rgba(239, 68, 68, 0.4); border-radius: 50%; animation: ripple 1.5s infinite ease-out; z-index: 0;"></div>
+      <div style="position: relative; z-index: 10; width: 36px; height: 36px; background: linear-gradient(135deg, #ef4444, #b91c1c); border: 3px solid white; border-radius: 50% 50% 0 50%; transform: rotate(45deg); box-shadow: 0 10px 25px rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center;">
+        <div style="width: 12px; height: 12px; background-color: white; border-radius: 50%;"></div>
       </div>
-      
-      <div style="
-        position: absolute;
-        bottom: -5px;
-        width: 20px;
-        height: 6px;
-        background-color: rgba(0,0,0,0.3);
-        border-radius: 50%;
-        filter: blur(2px);
-      "></div>
-
     </div>
-    <style>
-      @keyframes ripple {
-        0% { transform: scale(0.5); opacity: 1; }
-        100% { transform: scale(2.5); opacity: 0; }
-      }
-    </style>
+    <style>@keyframes ripple { 0% { transform: scale(0.5); opacity: 1; } 100% { transform: scale(2.5); opacity: 0; } }</style>
   `,
   iconSize: [50, 50],
-  iconAnchor: [25, 45], // Anchored at the bottom tip
+  iconAnchor: [25, 45],
 });
 
-// --- MOCK DATA ---
-const NEARBY_SPOTS = [
-  { id: '1', title: 'City Center Mall (Level 3)', address: 'Anna Salai, Chennai', price: 40, rating: 4.8, distance: '2 min', image: PARKING_2, type: 'Commercial', lat: 13.0827, lng: 80.2707, isFloodSafe: true },
-  { id: '2', title: 'Greenways Driveway', address: 'Adyar, Chennai', price: 25, rating: 4.5, distance: '5 min', image: PARKING_1, type: 'Private', lat: 13.0012, lng: 80.2565, isFloodSafe: false },
-  { id: '3', title: 'Metro Station Hub', address: 'Guindy, Chennai', price: 30, rating: 4.2, distance: '8 min', image: PARKING_2, type: 'Commercial', lat: 13.0067, lng: 80.2206, isFloodSafe: true },
-];
+// --- HELPER: Haversine Distance Calculation ---
+function getDistanceFromLatLonInKm(lat1: number, lon1: number, lat2: number, lon2: number) {
+  const R = 6371; // Radius of the earth in km
+  const dLat = deg2rad(lat2 - lat1);
+  const dLon = deg2rad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const d = R * c; // Distance in km
+  return d.toFixed(1);
+}
 
-// --- FULL SCREEN STORM INTRO ANIMATION ---
+function deg2rad(deg: number) {
+  return deg * (Math.PI / 180);
+}
+
+// --- COMPONENTS ---
+
 const StormIntro = () => {
   const drops = Array.from({ length: 100 }).map((_, i) => ({
     id: i,
@@ -169,11 +128,6 @@ const StormIntro = () => {
           style={{ left: drop.left }}
         />
       ))}
-      <motion.div
-        animate={{ opacity: [0, 0, 1, 0, 0.8, 0] }}
-        transition={{ duration: 1.5, times: [0, 0.4, 0.45, 0.5, 0.55, 1], repeat: 1 }}
-        className="absolute inset-0 bg-white z-20 mix-blend-overlay"
-      />
       <motion.div 
         initial={{ scale: 0.8, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
@@ -202,16 +156,60 @@ export default function Browse() {
   const navigate = useNavigate();
   const { user } = useAuth();
   
+  // State
+  const [spaces, setSpaces] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [showResults, setShowResults] = useState(false);
   const [selectedSpot, setSelectedSpot] = useState<string | null>(null);
   const [sosMode, setSosMode] = useState(false);
   const [showStormIntro, setShowStormIntro] = useState(false);
+  // Default Center: Chennai
   const [mapCenter, setMapCenter] = useState<[number, number]>([13.0827, 80.2707]);
   const [searchedLocation, setSearchedLocation] = useState<{lat: number, lng: number, name: string} | null>(null);
 
-  const filteredSpots = NEARBY_SPOTS.filter(spot => sosMode ? spot.isFloodSafe : true);
+  // --- 1. FETCH DATA FROM DB ---
+  useEffect(() => {
+    const fetchSpaces = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('parking_spaces')
+          .select('*')
+          .eq('is_active', true); // Only active spots
+
+        if (error) throw error;
+        setSpaces(data || []);
+      } catch (err) {
+        console.error("Error fetching spaces:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchSpaces();
+  }, []);
+
+  // --- 2. CALCULATE DISTANCE & FILTER ---
+  const filteredSpots = useMemo(() => {
+    // Filter by Flood Mode
+    let processed = spaces.filter(spot => sosMode ? spot.is_flood_safe : true);
+
+    // Filter by Valid Coordinates
+    processed = processed.filter(spot => spot.latitude && spot.longitude);
+
+    // Calculate Distance & Map properties
+    return processed.map(spot => ({
+      ...spot,
+      lat: spot.latitude,
+      lng: spot.longitude,
+      // Calculate distance from current MAP center
+      distance: getDistanceFromLatLonInKm(mapCenter[0], mapCenter[1], spot.latitude, spot.longitude),
+      image: spot.images && spot.images.length > 0 ? spot.images[0] : 'https://placehold.co/600x400/1e293b/FFF?text=Parking',
+      price: spot.price_car || spot.price_bike || 0,
+      type: spot.space_type === 'private' ? 'Private' : 'Commercial'
+    })).sort((a, b) => parseFloat(a.distance) - parseFloat(b.distance)); // Sort by nearest
+  }, [spaces, sosMode, mapCenter]);
 
   const handleToggleRainMode = () => {
     if (!sosMode) {
@@ -231,7 +229,7 @@ export default function Browse() {
 
     try {
       const response = await fetch(
-        `https://api.tomtom.com/search/2/search/${encodeURIComponent(searchQuery)}.json?key=${TOMTOM_API_KEY}&limit=1`
+        `https://api.tomtom.com/search/2/search/${encodeURIComponent(searchQuery)}.json?key=${TOMTOM_API_KEY}&limit=1&lat=13.0827&lon=80.2707&radius=30000` // Bias to Chennai
       );
       const data = await response.json();
 
@@ -292,7 +290,7 @@ export default function Browse() {
             <Marker 
               key={spot.id} 
               position={[spot.lat, spot.lng]}
-              icon={createParkingIcon(spot.price, selectedSpot === spot.id, sosMode && spot.isFloodSafe)}
+              icon={createParkingIcon(spot.price, selectedSpot === spot.id, sosMode && spot.is_flood_safe)}
               eventHandlers={{
                 click: () => {
                   setSelectedSpot(spot.id);
@@ -303,7 +301,7 @@ export default function Browse() {
             />
           ))}
 
-          {/* NEW 3D POINTER MARKER */}
+          {/* DESTINATION MARKER */}
           {searchedLocation && (
             <Marker 
               position={[searchedLocation.lat, searchedLocation.lng]}
@@ -354,7 +352,7 @@ export default function Browse() {
                   <div className="flex flex-col md:flex-row justify-between md:items-center gap-4">
                     <h1 className="text-2xl font-bold tracking-tight drop-shadow-sm">Where to park?</h1>
                     
-                    {/* --- TOGGLE WITH "NORMAL" and "FLOOD" --- */}
+                    {/* --- TOGGLE --- */}
                     <div 
                       onClick={handleToggleRainMode}
                       className={`
@@ -385,7 +383,7 @@ export default function Browse() {
                       <div className={`w-2 h-2 rounded-full mr-4 ${sosMode ? 'bg-blue-400 shadow-[0_0_10px_#60a5fa]' : 'bg-slate-900'}`} />
                       <input 
                         type="text"
-                        placeholder="Enter destination (e.g. Marina Beach)"
+                        placeholder="Enter destination (e.g. T. Nagar)"
                         className={`bg-transparent border-none outline-none font-medium w-full text-lg placeholder:text-opacity-60 ${sosMode ? 'text-white placeholder:text-slate-400' : 'text-slate-900 placeholder:text-slate-500'}`}
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
@@ -426,7 +424,7 @@ export default function Browse() {
           </Card>
         </motion.div>
 
-        {/* BOTTOM SHEET */}
+        {/* BOTTOM SHEET RESULTS */}
         <AnimatePresence>
           {showResults && (
             <motion.div
@@ -450,7 +448,12 @@ export default function Browse() {
                 </div>
                 
                 <div className="space-y-4">
-                  {filteredSpots.map((spot) => (
+                  {loading ? (
+                    <div className="py-12 text-center text-slate-500 flex flex-col items-center">
+                      <Loader2 className="animate-spin mb-2" />
+                      Searching grid...
+                    </div>
+                  ) : filteredSpots.map((spot) => (
                     <motion.div 
                       key={spot.id}
                       layoutId={spot.id}
@@ -462,13 +465,13 @@ export default function Browse() {
                           : (sosMode ? 'bg-slate-800/40 border-slate-700/50 hover:bg-slate-800/60 hover:border-blue-500/30' : 'bg-white border-slate-100 hover:border-emerald-200 hover:shadow-lg')}
                       `}
                     >
-                      {sosMode && spot.isFloodSafe && (
+                      {sosMode && spot.is_flood_safe && (
                         <div className="absolute inset-0 bg-blue-500/5 opacity-0 group-hover:opacity-100 transition-opacity" />
                       )}
 
-                      <div className="w-20 h-20 rounded-xl overflow-hidden shrink-0 shadow-sm relative z-10">
+                      <div className="w-20 h-20 rounded-xl overflow-hidden shrink-0 shadow-sm relative z-10 bg-slate-200">
                         <img src={spot.image} alt={spot.title} className="w-full h-full object-cover" />
-                        {spot.isFloodSafe && sosMode && (
+                        {spot.is_flood_safe && sosMode && (
                           <div className="absolute bottom-0 left-0 right-0 bg-blue-600 text-white text-[9px] font-bold text-center py-1 tracking-wider shadow-lg">
                             SAFE
                           </div>
@@ -483,12 +486,12 @@ export default function Browse() {
                         <p className={`text-xs truncate mb-2 ${sosMode ? 'text-slate-400' : 'text-slate-500'}`}>{spot.address}</p>
                         <div className="flex items-center gap-3">
                           <span className={`text-xs font-medium ${sosMode ? 'text-slate-400' : 'text-slate-400'}`}>
-                            {spot.distance} away
+                            {spot.distance} km away
                           </span>
                           <span className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded-md ${spot.type === 'Private' ? 'bg-indigo-500/10 text-indigo-500' : 'bg-purple-500/10 text-purple-500'}`}>
                             {spot.type}
                           </span>
-                          {spot.isFloodSafe && (
+                          {spot.is_flood_safe && (
                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-blue-500/20 text-blue-400 flex items-center gap-1 border border-blue-500/20">
                                <Umbrella size={8} /> Safe
                              </span>
@@ -501,13 +504,13 @@ export default function Browse() {
                     </motion.div>
                   ))}
                   
-                  {filteredSpots.length === 0 && (
+                  {!loading && filteredSpots.length === 0 && (
                     <div className={`text-center py-12 rounded-3xl border border-dashed flex flex-col items-center justify-center ${sosMode ? 'bg-slate-800/20 border-slate-700/50 text-slate-400' : 'bg-slate-50 border-slate-200 text-slate-500'}`}>
                        <div className={`p-4 rounded-full mb-3 ${sosMode ? 'bg-slate-800' : 'bg-white'}`}>
                           <Droplets size={32} className={sosMode ? 'text-blue-500' : 'text-slate-300'} />
                        </div>
-                       <p className="font-bold">No safe spots nearby.</p>
-                       <p className="text-xs mt-1 opacity-70">Try searching for Malls or Multi-level parking.</p>
+                       <p className="font-bold">No spots found in this area.</p>
+                       <p className="text-xs mt-1 opacity-70">Try moving the map or searching a different area.</p>
                     </div>
                   )}
                 </div>

@@ -7,11 +7,12 @@ import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import Index from "./pages/Index";
 import Auth from "./pages/Auth";
 import ChooseRole from "./pages/ChooseRole";
-import RegisterType from "./pages/RegisterType";
 import RegisterSpace from "./pages/RegisterSpace";
 import Browse from "./pages/Browse";
 import Booking from "./pages/Booking";
 import ProviderDashboard from "./pages/ProviderDashboard";
+import MyBookings from "./pages/MyBookings"; // NEW
+import Navigation from "./pages/Navigation"; // NEW
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -39,6 +40,7 @@ function AppRoutes() {
     <Routes>
       <Route path="/" element={<Index />} />
       <Route path="/auth" element={<Auth />} />
+      
       <Route
         path="/choose-role"
         element={
@@ -47,14 +49,7 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       />
-      <Route
-        path="/register-type"
-        element={
-          <ProtectedRoute>
-            <RegisterType />
-          </ProtectedRoute>
-        }
-      />
+      
       <Route
         path="/register-space"
         element={
@@ -63,6 +58,7 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       />
+      
       <Route
         path="/browse"
         element={
@@ -71,6 +67,7 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       />
+      
       <Route
         path="/booking/:id"
         element={
@@ -79,6 +76,7 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       />
+      
       <Route
         path="/provider-dashboard"
         element={
@@ -87,6 +85,26 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       />
+
+      {/* NEW ROUTES ADDED HERE */}
+      <Route
+        path="/my-bookings"
+        element={
+          <ProtectedRoute>
+            <MyBookings />
+          </ProtectedRoute>
+        }
+      />
+      
+      <Route
+        path="/navigation/:bookingId"
+        element={
+          <ProtectedRoute>
+            <Navigation />
+          </ProtectedRoute>
+        }
+      />
+
       <Route path="*" element={<NotFound />} />
     </Routes>
   );

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -6,298 +6,246 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Logo } from '@/components/Logo';
 import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/lib/supabase';
 import { toast } from '@/hooks/use-toast';
-import { ArrowLeft, MapPin, Star, Clock, Car, Calendar, Check, LogOut } from 'lucide-react';
+import { 
+  ArrowLeft, MapPin, Star, Clock, Car, Calendar, Check, 
+  LogOut, Shield, Umbrella, Video, UserCheck, Loader2, IndianRupee, Navigation as NavIcon 
+} from 'lucide-react';
+import { motion } from 'framer-motion';
 
-const mockParkingSpots: Record<string, any> = {
-  '1': {
-    id: '1',
-    title: 'Downtown Garage',
-    address: '123 Main St, San Francisco',
-    price: 8,
-    rating: 4.8,
-    reviews: 124,
-    type: 'commercial',
-    description: 'Secure underground parking with 24/7 access. CCTV monitored, well-lit, and easy access to downtown attractions.',
-    amenities: ['24/7 Access', 'CCTV', 'EV Charging', 'Covered'],
-  },
-  '2': {
-    id: '2',
-    title: 'Private Driveway Space',
-    address: '456 Oak Ave, San Francisco',
-    price: 5,
-    rating: 4.9,
-    reviews: 56,
-    type: 'private',
-    description: 'Quiet residential driveway with easy street access. Perfect for short-term parking during work hours.',
-    amenities: ['Covered', 'Street Access', 'Quiet Area'],
-  },
-  '3': {
-    id: '3',
-    title: 'Mall Parking Complex',
-    address: '789 Shopping Center',
-    price: 6,
-    rating: 4.5,
-    reviews: 312,
-    type: 'commercial',
-    description: 'Large multi-level parking structure with direct mall access. Validated parking available with purchases.',
-    amenities: ['Multi-level', 'Mall Access', 'Security', 'Well-lit'],
-  },
-  '5': {
-    id: '5',
-    title: 'Event Center Parking',
-    address: '555 Stadium Way',
-    price: 12,
-    rating: 4.3,
-    reviews: 89,
-    type: 'commercial',
-    description: 'Premium parking for events and concerts. Pre-book to guarantee your spot during busy events.',
-    amenities: ['Event Access', 'Security', 'Large Spaces', 'Well-lit'],
-  },
-};
+import BACKGROUND_IMAGE from '../assets/background-hero.jpg';
+
+interface Spot {
+  id: string;
+  title: string;
+  address_street: string;
+  city: string;
+  price_car: number;
+  rating: number; 
+  images: string[];
+  description: string;
+  has_cctv: boolean;
+  has_guard: boolean;
+  is_flood_safe: boolean;
+  owner_id: string;
+}
 
 export default function Booking() {
   const navigate = useNavigate();
   const { id } = useParams();
   const { user, logout } = useAuth();
-  const spot = mockParkingSpots[id || '1'];
+
+  const [spot, setSpot] = useState<Spot | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isBooking, setIsBooking] = useState(false);
+  const [isSuccess, setIsSuccess] = useState(false);
+  const [confirmedBookingId, setConfirmedBookingId] = useState<string | null>(null);
 
   const [date, setDate] = useState('');
   const [startTime, setStartTime] = useState('');
   const [duration, setDuration] = useState('2');
-  const [isLoading, setIsLoading] = useState(false);
-  const [isSuccess, setIsSuccess] = useState(false);
+
+  useEffect(() => {
+    const fetchSpot = async () => {
+      if (!id) return;
+      try {
+        const { data, error } = await supabase
+          .from('parking_spaces')
+          .select('*')
+          .eq('id', id)
+          .single();
+
+        if (error) throw error;
+        setSpot(data);
+      } catch (error) {
+        console.error("Error fetching spot:", error);
+        toast({ title: "Error", description: "Could not load parking spot details.", variant: "destructive" });
+        navigate('/browse');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    fetchSpot();
+  }, [id, navigate]);
 
   const handleLogout = () => {
     logout();
-    navigate('/auth');
+    navigate('/auth?mode=login');
   };
 
-  const totalPrice = spot ? spot.price * parseInt(duration || '1') : 0;
+  const hourlyRate = spot?.price_car || 50; 
+  const totalPrice = hourlyRate * parseInt(duration || '0');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsLoading(true);
+    if (!user || !spot) return;
 
-    await new Promise(resolve => setTimeout(resolve, 1500));
+    if (!date || !startTime || !duration) {
+      toast({ title: "Missing Info", description: "Please fill in all booking details.", variant: "destructive" });
+      return;
+    }
 
-    setIsLoading(false);
-    setIsSuccess(true);
-    toast({ 
-      title: "Booking Confirmed!", 
-      description: `Your parking spot at ${spot.title} has been reserved.` 
-    });
+    setIsBooking(true);
+
+    try {
+      const startDateTime = new Date(`${date}T${startTime}`);
+      const endDateTime = new Date(startDateTime.getTime() + parseInt(duration) * 60 * 60 * 1000);
+
+      const payload = {
+        space_id: spot.id,
+        driver_id: user.id,
+        start_time: startDateTime.toISOString(),
+        end_time: endDateTime.toISOString(),
+        total_price: totalPrice,
+        status: 'confirmed'
+      };
+
+      const { data, error } = await supabase
+        .from('bookings')
+        .insert(payload)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      if(data) setConfirmedBookingId(data.id);
+      setIsSuccess(true);
+      toast({ title: "Booking Confirmed!", description: "Your spot has been reserved successfully." });
+
+    } catch (error: any) {
+      console.error("Booking error:", error);
+      toast({ title: "Booking Failed", description: error.message, variant: "destructive" });
+    } finally {
+      setIsBooking(false);
+    }
   };
 
-  if (!spot) {
-    return (
-      <div className="min-h-screen bg-gradient-hero flex items-center justify-center">
-        <p className="text-muted-foreground">Parking spot not found.</p>
-      </div>
-    );
+  if (isLoading) {
+    return <div className="min-h-screen flex items-center justify-center bg-slate-50"><Loader2 className="h-8 w-8 animate-spin text-emerald-600" /></div>;
   }
+
+  if (!spot) return null;
 
   if (isSuccess) {
     return (
-      <div className="min-h-screen bg-gradient-hero flex flex-col">
-        <header className="p-6">
-          <Logo />
-        </header>
-        <main className="flex-1 flex items-center justify-center px-4 pb-12">
-          <Card className="w-full max-w-md text-center animate-scale-in">
-            <CardContent className="pt-8 pb-8">
-              <div className="w-20 h-20 bg-gradient-primary rounded-full flex items-center justify-center mx-auto mb-6">
-                <Check className="h-10 w-10 text-primary-foreground" />
+      <div className="min-h-screen flex flex-col relative font-sans text-slate-900">
+        <div className="absolute inset-0 bg-cover bg-center z-0" style={{ backgroundImage: `url(${BACKGROUND_IMAGE})` }} />
+        <div className="absolute inset-0 z-0 bg-white/95 backdrop-blur-sm" />
+        
+        <main className="relative z-10 flex-1 flex items-center justify-center px-4">
+          <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}>
+            <Card className="w-full max-w-md text-center rounded-3xl bg-white/80 border-white/60 shadow-2xl p-8 backdrop-blur-xl">
+              <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                <Check className="h-10 w-10 text-emerald-600" />
               </div>
-              <h2 className="text-2xl font-bold mb-2">Booking Confirmed!</h2>
-              <p className="text-muted-foreground mb-4">
-                Your parking spot has been reserved.
-              </p>
-              <div className="bg-secondary rounded-lg p-4 mb-6 text-left">
-                <p className="font-semibold">{spot.title}</p>
-                <p className="text-sm text-muted-foreground">{spot.address}</p>
-                <div className="flex items-center justify-between mt-3 pt-3 border-t border-border">
-                  <span className="text-sm text-muted-foreground">Total Paid</span>
-                  <span className="font-bold text-primary">${totalPrice}</span>
+              <h2 className="text-2xl font-bold mb-2 text-slate-900">Booking Confirmed!</h2>
+              <p className="text-slate-600 mb-6">Your spot at <strong>{spot.title}</strong> is reserved.</p>
+              
+              <div className="bg-slate-50 rounded-xl p-4 mb-6 text-left border border-slate-100">
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-xs text-slate-500 uppercase tracking-wider">Date</span>
+                  <span className="font-semibold text-slate-900">{date}</span>
+                </div>
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-xs text-slate-500 uppercase tracking-wider">Time</span>
+                  <span className="font-semibold text-slate-900">{startTime} ({duration} hrs)</span>
+                </div>
+                <div className="flex justify-between items-center pt-2 border-t border-slate-200 mt-2">
+                  <span className="text-sm font-bold text-slate-700">Total Paid</span>
+                  <span className="text-lg font-bold text-emerald-600">₹{totalPrice}</span>
                 </div>
               </div>
+
               <div className="space-y-3">
-                <Button onClick={() => navigate('/browse')} className="w-full">
-                  Book Another Spot
+                <Button 
+                  onClick={() => navigate(`/navigation/${confirmedBookingId}`)} 
+                  className="w-full h-12 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold shadow-lg shadow-blue-600/20"
+                >
+                  <NavIcon size={18} className="mr-2" /> Navigate to Spot
                 </Button>
-                <Button variant="outline" onClick={() => navigate('/choose-role')} className="w-full">
-                  Back to Home
+                <Button variant="outline" onClick={() => navigate('/my-bookings')} className="w-full h-12 rounded-xl border-slate-300">
+                  View My Bookings
                 </Button>
               </div>
-            </CardContent>
-          </Card>
+            </Card>
+          </motion.div>
         </main>
       </div>
     );
   }
 
+  const spotImage = spot.images && spot.images.length > 0 ? spot.images[0] : 'https://placehold.co/600x400/e2e8f0/1e293b?text=No+Image';
+
   return (
-    <div className="min-h-screen bg-gradient-hero flex flex-col">
-      {/* Header */}
-      <header className="p-6 flex items-center justify-between">
-        <Logo />
-        <div className="flex items-center gap-4">
-          <span className="text-sm text-muted-foreground hidden sm:block">
-            Hi, {user?.name}
-          </span>
-          <Button variant="ghost" size="sm" onClick={handleLogout}>
-            <LogOut size={18} />
-            <span className="hidden sm:inline ml-2">Logout</span>
-          </Button>
+    <div className="min-h-screen flex flex-col relative overflow-hidden font-sans text-slate-900">
+      <div className="fixed inset-0 bg-cover bg-center z-0" style={{ backgroundImage: `url(${BACKGROUND_IMAGE})` }} />
+      <div className="fixed inset-0 z-0 bg-gradient-to-b from-white/95 via-white/90 to-white/95 backdrop-blur-[2px]" />
+
+      <header className="relative z-20 w-full border-b border-slate-200/60 bg-white/60 backdrop-blur-md sticky top-0">
+        <div className="mx-auto max-w-7xl px-4 py-4 flex items-center justify-between">
+          <Logo color="dark" size="md" />
+          <div className="flex items-center gap-4">
+            <span className="hidden sm:block text-sm font-medium text-slate-600">Hi, {user?.name}</span>
+            <Button variant="ghost" size="sm" onClick={handleLogout} className="text-slate-500 hover:text-red-600 hover:bg-red-50"><LogOut size={18} /></Button>
+          </div>
         </div>
       </header>
 
-      {/* Back Button */}
-      <div className="px-6">
-        <Button 
-          variant="ghost" 
-          onClick={() => navigate('/browse')}
-          className="text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft size={18} className="mr-2" />
-          Back to Search
-        </Button>
+      <div className="relative z-10 max-w-7xl mx-auto w-full px-4 mt-6">
+        <Button variant="ghost" onClick={() => navigate('/browse')} className="text-slate-500 hover:text-slate-900 hover:bg-white/50 pl-0"><ArrowLeft size={18} className="mr-2" />Back to Search</Button>
       </div>
 
-      {/* Main Content */}
-      <main className="flex-1 px-4 md:px-6 py-6">
-        <div className="max-w-4xl mx-auto">
-          <div className="grid md:grid-cols-2 gap-6">
-            {/* Spot Details */}
-            <Card className="animate-fade-up">
-              <CardHeader>
-                <div className="flex items-center gap-2 mb-2">
-                  <span className={`text-xs px-2 py-0.5 rounded-full capitalize ${
-                    spot.type === 'private' 
-                      ? 'bg-accent/10 text-accent' 
-                      : 'bg-primary/10 text-primary'
-                  }`}>
-                    {spot.type}
-                  </span>
+      <main className="relative z-10 flex-1 px-4 py-6">
+        <div className="max-w-5xl mx-auto">
+          <div className="grid lg:grid-cols-2 gap-8">
+            <motion.div initial={{ x: -20, opacity: 0 }} animate={{ x: 0, opacity: 1 }}>
+              <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-xl overflow-hidden rounded-3xl h-full">
+                <div className="h-64 w-full bg-slate-200 relative">
+                  <img src={spotImage} alt={spot.title} className="w-full h-full object-cover" />
+                  <div className="absolute top-4 right-4 bg-white/90 backdrop-blur-md px-3 py-1 rounded-full text-xs font-bold shadow-sm uppercase tracking-wider text-slate-700">Commercial</div>
                 </div>
-                <CardTitle className="text-2xl">{spot.title}</CardTitle>
-                <div className="flex items-center gap-1 text-muted-foreground text-sm">
-                  <MapPin size={14} />
-                  {spot.address}
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="flex items-center gap-4 mb-4">
-                  <div className="flex items-center gap-1">
-                    <Star className="h-5 w-5 fill-amber-400 text-amber-400" />
-                    <span className="font-semibold">{spot.rating}</span>
-                    <span className="text-muted-foreground text-sm">({spot.reviews} reviews)</span>
+                <CardContent className="p-8">
+                  <h1 className="text-3xl font-bold text-slate-900 mb-2">{spot.title}</h1>
+                  <div className="flex items-center gap-2 text-slate-500 mb-6"><MapPin size={18} /><span>{spot.address_street}, {spot.city}</span></div>
+                  <div className="flex gap-4 mb-8">
+                    <div className="flex items-center gap-1.5 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-100 text-amber-700 font-bold text-sm"><Star size={16} className="fill-amber-500 text-amber-500" />5.0</div>
+                    {spot.is_flood_safe && <div className="flex items-center gap-1.5 bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-100 text-blue-600 font-bold text-sm"><Umbrella size={16} />Flood Safe</div>}
                   </div>
-                </div>
-
-                <p className="text-muted-foreground mb-4">{spot.description}</p>
-
-                <div className="mb-4">
-                  <p className="font-medium mb-2">Amenities</p>
-                  <div className="flex flex-wrap gap-2">
-                    {spot.amenities.map((amenity: string) => (
-                      <span 
-                        key={amenity}
-                        className="text-xs px-3 py-1.5 bg-secondary rounded-full text-secondary-foreground"
-                      >
-                        {amenity}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="pt-4 border-t border-border">
-                  <p className="text-3xl font-bold text-primary">
-                    ${spot.price}
-                    <span className="text-sm font-normal text-muted-foreground">/hour</span>
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Booking Form */}
-            <Card className="animate-fade-up" style={{ animationDelay: '100ms' }}>
-              <CardHeader>
-                <CardTitle>Book This Spot</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <form onSubmit={handleSubmit} className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="date">Date</Label>
-                    <div className="relative">
-                      <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
-                      <Input
-                        id="date"
-                        type="date"
-                        value={date}
-                        onChange={(e) => setDate(e.target.value)}
-                        className="pl-10"
-                        required
-                      />
+                  <div className="space-y-4 mb-8">
+                    <h3 className="font-bold text-slate-900">Amenities</h3>
+                    <div className="grid grid-cols-2 gap-3">
+                      {spot.has_cctv && <div className="flex items-center gap-2 text-sm text-slate-600"><Video size={16} className="text-emerald-500" /> CCTV Surveillance</div>}
+                      {spot.has_guard && <div className="flex items-center gap-2 text-sm text-slate-600"><UserCheck size={16} className="text-emerald-500" /> Security Guard</div>}
+                      <div className="flex items-center gap-2 text-sm text-slate-600"><Shield size={16} className="text-emerald-500" /> Gated Complex</div>
                     </div>
                   </div>
+                  <div className="pt-6 border-t border-slate-200"><div className="text-sm text-slate-500 mb-1">Price per hour</div><div className="text-3xl font-bold text-emerald-600">₹{hourlyRate}</div></div>
+                </CardContent>
+              </Card>
+            </motion.div>
 
-                  <div className="space-y-2">
-                    <Label htmlFor="time">Start Time</Label>
-                    <div className="relative">
-                      <Clock className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
-                      <Input
-                        id="time"
-                        type="time"
-                        value={startTime}
-                        onChange={(e) => setStartTime(e.target.value)}
-                        className="pl-10"
-                        required
-                      />
+            <motion.div initial={{ x: 20, opacity: 0 }} animate={{ x: 0, opacity: 1 }} transition={{ delay: 0.1 }}>
+              <Card className="border-0 shadow-xl bg-white rounded-3xl overflow-hidden sticky top-24">
+                <CardHeader className="bg-slate-900 text-white p-6"><CardTitle className="text-xl font-bold flex items-center gap-2"><Calendar className="text-emerald-400" /> Reserve your spot</CardTitle></CardHeader>
+                <CardContent className="p-8 space-y-6">
+                  <form onSubmit={handleSubmit} className="space-y-6">
+                    <div className="space-y-2"><Label htmlFor="date" className="text-slate-700 font-semibold">Date</Label><div className="relative"><Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-400" /><Input id="date" type="date" value={date} onChange={(e) => setDate(e.target.value)} className="pl-10 h-12 bg-slate-50 border-slate-200 focus:border-emerald-500" required /></div></div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2"><Label htmlFor="time" className="text-slate-700 font-semibold">Start Time</Label><div className="relative"><Clock className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-400" /><Input id="time" type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} className="pl-10 h-12 bg-slate-50 border-slate-200 focus:border-emerald-500" required /></div></div>
+                      <div className="space-y-2"><Label htmlFor="duration" className="text-slate-700 font-semibold">Duration (Hours)</Label><div className="relative"><Car className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-400" /><Input id="duration" type="number" min="1" max="24" value={duration} onChange={(e) => setDuration(e.target.value)} className="pl-10 h-12 bg-slate-50 border-slate-200 focus:border-emerald-500" required /></div></div>
                     </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="duration">Duration (hours)</Label>
-                    <div className="relative">
-                      <Car className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
-                      <Input
-                        id="duration"
-                        type="number"
-                        min="1"
-                        max="24"
-                        value={duration}
-                        onChange={(e) => setDuration(e.target.value)}
-                        className="pl-10"
-                        required
-                      />
+                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-3">
+                      <div className="flex justify-between text-sm text-slate-600"><span>Rate</span><span>₹{hourlyRate} x {duration} hrs</span></div>
+                      <div className="flex justify-between text-sm text-slate-600"><span>Platform Fee</span><span>₹10</span></div>
+                      <div className="h-px bg-slate-200 my-2" />
+                      <div className="flex justify-between text-lg font-bold text-slate-900"><span>Total to Pay</span><span>₹{totalPrice + 10}</span></div>
                     </div>
-                  </div>
-
-                  <div className="pt-4 border-t border-border">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-muted-foreground">
-                        ${spot.price} × {duration} hour{parseInt(duration) > 1 ? 's' : ''}
-                      </span>
-                      <span className="font-semibold">${totalPrice}</span>
-                    </div>
-                    <div className="flex items-center justify-between text-lg">
-                      <span className="font-semibold">Total</span>
-                      <span className="text-2xl font-bold text-primary">${totalPrice}</span>
-                    </div>
-                  </div>
-
-                  <Button 
-                    type="submit" 
-                    className="w-full" 
-                    size="lg"
-                    disabled={isLoading}
-                  >
-                    {isLoading ? 'Processing...' : 'Confirm Booking'}
-                  </Button>
-                </form>
-              </CardContent>
-            </Card>
+                    <Button type="submit" className="w-full h-14 text-lg font-bold rounded-xl bg-slate-900 hover:bg-slate-800 shadow-xl shadow-slate-900/20" disabled={isBooking}>{isBooking ? <span className="flex items-center gap-2"><Loader2 className="animate-spin" /> Processing...</span> : 'Confirm & Pay'}</Button>
+                  </form>
+                </CardContent>
+              </Card>
+            </motion.div>
           </div>
         </div>
       </main>
