@@ -27,7 +27,8 @@ import {
   FileText,
   Building2,
   Home,
-  Upload
+  Upload,
+  Hash // Added Hash icon for count
 } from 'lucide-react';
 
 import BACKGROUND_IMAGE from '../assets/background-hero.jpg';
@@ -52,15 +53,24 @@ export default function RegisterSpace() {
   const [addrStreet, setAddrStreet] = useState('');
   const [addrLandmark, setAddrLandmark] = useState('');
   const [city, setCity] = useState('');
-  const [pincode, setPincode] = useState(''); // NEW PINCODE STATE
+  const [pincode, setPincode] = useState('');
 
-  // Vehicle & Pricing
+  // Vehicle Selection
   const [vehicleTypes, setVehicleTypes] = useState<{ car: boolean; bike: boolean; suv: boolean }>({
     car: true,
     bike: true,
     suv: false,
   });
+
+  // Pricing State
   const [prices, setPrices] = useState({
+    car: '',
+    bike: '',
+    suv: ''
+  });
+
+  // NEW: Slot Count State
+  const [slots, setSlots] = useState({
     car: '',
     bike: '',
     suv: ''
@@ -85,8 +95,6 @@ export default function RegisterSpace() {
   // Images & Docs
   const [photos, setPhotos] = useState<File[]>([]); 
   const [existingImages, setExistingImages] = useState<string[]>([]);
-  
-  // Verification Document
   const [verificationFile, setVerificationFile] = useState<File | null>(null);
   const [existingVerificationDoc, setExistingVerificationDoc] = useState<string | null>(null);
 
@@ -119,7 +127,7 @@ export default function RegisterSpace() {
       setAddrStreet(data.address_street || '');
       setAddrLandmark(data.address_landmark || '');
       setCity(data.city || '');
-      setPincode(data.pincode || ''); // Populate Pincode
+      setPincode(data.pincode || ''); 
       setDescription(data.description || '');
 
       setVehicleTypes({
@@ -132,6 +140,13 @@ export default function RegisterSpace() {
         bike: data.price_bike ? String(data.price_bike) : '',
         suv: data.price_suv ? String(data.price_suv) : '',
       });
+
+      // Populate Slots (Assuming columns exist or using fallback logic if schema not updated yet)
+      // Note: You need to add 'slots_car', 'slots_bike', 'slots_suv' to DB schema to persist this fully.
+      // For now, storing locally in state. 
+      if (data.slots_car) setSlots(prev => ({...prev, car: String(data.slots_car)}));
+      if (data.slots_bike) setSlots(prev => ({...prev, bike: String(data.slots_bike)}));
+      if (data.slots_suv) setSlots(prev => ({...prev, suv: String(data.slots_suv)}));
 
       setSecurityCCTV(data.has_cctv);
       setSecurityGuard(data.has_guard);
@@ -162,6 +177,10 @@ export default function RegisterSpace() {
 
   const handlePriceChange = (type: 'car' | 'bike' | 'suv', val: string) => {
     setPrices(prev => ({ ...prev, [type]: val }));
+  };
+
+  const handleSlotChange = (type: 'car' | 'bike' | 'suv', val: string) => {
+    setSlots(prev => ({ ...prev, [type]: val }));
   };
 
   const getPriceDisplay = () => {
@@ -209,7 +228,6 @@ export default function RegisterSpace() {
     e.preventDefault();
     
     // VALIDATION
-    // Added Pincode to validation check
     if (!title || !addrStreet || !city || !pincode) {
       toast({ title: 'Missing Fields', description: 'Please fill in title, address, and pincode.', variant: 'destructive' });
       return;
@@ -270,18 +288,24 @@ export default function RegisterSpace() {
         address_street: addrStreet,
         address_landmark: addrLandmark,
         city: city,
-        pincode: pincode, // SAVING PINCODE HERE
+        pincode: pincode, 
         
+        // Prices
         price_car: vehicleTypes.car && prices.car ? parseFloat(prices.car) : null,
         price_bike: vehicleTypes.bike && prices.bike ? parseFloat(prices.bike) : null,
         price_suv: vehicleTypes.suv && prices.suv ? parseFloat(prices.suv) : null,
+
+        // NEW: Slot Counts
+        slots_car: vehicleTypes.car && slots.car ? parseInt(slots.car) : 0,
+        slots_bike: vehicleTypes.bike && slots.bike ? parseInt(slots.bike) : 0,
+        slots_suv: vehicleTypes.suv && slots.suv ? parseInt(slots.suv) : 0,
 
         has_cctv: securityCCTV,
         has_guard: securityGuard,
         has_auto_entry: instantEntry,
 
         floor_level: floorLevel,
-        is_flood_safe: isFloodSafe, // Simple boolean, no ML check
+        is_flood_safe: isFloodSafe, 
 
         business_name: providerType === 'commercial' ? businessName : null,
         gst_number: providerType === 'commercial' ? gstNumber : null,
@@ -422,7 +446,7 @@ export default function RegisterSpace() {
                             <Input value={city} onChange={(e) => setCity(e.target.value)} placeholder="Chennai" className="bg-white/80" />
                         </div>
                     </div>
-                    {/* ADDED PINCODE FIELD */}
+                    {/* PINCODE FIELD */}
                     <div className="space-y-2">
                         <Label className="text-xs text-slate-500">Pincode</Label>
                         <Input value={pincode} onChange={(e) => setPincode(e.target.value)} placeholder="600001" className="bg-white/80" />
@@ -431,15 +455,15 @@ export default function RegisterSpace() {
                 </CardContent>
               </Card>
 
-              {/* 3. Vehicles & Pricing */}
+              {/* 3. Vehicles, Pricing & SLOTS (Updated) */}
               <Card className="border-0 shadow-sm bg-white/60 backdrop-blur-xl border-white/50">
                  <CardContent className="p-6">
-                    <Label className="text-slate-700 font-semibold mb-4 block">Vehicles & Pricing</Label>
+                    <Label className="text-slate-700 font-semibold mb-4 block">Vehicles, Pricing & Slots</Label>
                     <div className="grid grid-cols-3 gap-4 mb-6">
                        {[
                           { id: 'bike', label: 'Bike', icon: Bike },
                           { id: 'car', label: 'Car', icon: Car },
-                          { id: 'suv', label: 'SUV/Van', icon: Truck },
+                          { id: 'suv', label: 'SUV', icon: Truck },
                        ].map((v) => (
                           <div key={v.id} onClick={() => setVehicleTypes(prev => ({ ...prev, [v.id]: !prev[v.id as keyof typeof prev] }))} className={`cursor-pointer rounded-xl border-2 p-4 flex flex-col items-center justify-center gap-2 transition-all duration-200 relative ${vehicleTypes[v.id as keyof typeof vehicleTypes] ? 'border-emerald-500 bg-emerald-50 text-emerald-700 shadow-sm' : 'border-slate-100 bg-white text-slate-400 hover:border-slate-300'}`}>
                              {vehicleTypes[v.id as keyof typeof vehicleTypes] && (<div className="absolute top-2 right-2 text-emerald-600"><Check size={14} strokeWidth={3} /></div>)}
@@ -448,23 +472,58 @@ export default function RegisterSpace() {
                           </div>
                        ))}
                     </div>
-                    <div className="space-y-3 bg-slate-50 p-4 rounded-xl border border-slate-100">
+                    
+                    <div className="space-y-4 bg-slate-50 p-4 rounded-xl border border-slate-100">
                         {vehicleTypes.bike && (
                             <div className="flex items-center gap-3">
-                                <span className="text-sm font-medium w-20">Bike</span>
-                                <div className="relative flex-1"><IndianRupee className="absolute left-3 top-2.5 h-3.5 w-3.5 text-slate-400" /><Input type="number" className="pl-8 h-9 bg-white" value={prices.bike} onChange={(e) => handlePriceChange('bike', e.target.value)} /></div>
+                                <div className="w-8 flex justify-center text-slate-500"><Bike size={20} /></div>
+                                <div className="text-sm font-medium text-slate-700 w-12">Bike</div>
+                                
+                                {/* Price Input */}
+                                <div className="relative flex-1">
+                                    <IndianRupee className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                                    <Input type="number" placeholder="Price/hr" className="pl-8 h-9 bg-white" value={prices.bike} onChange={(e) => handlePriceChange('bike', e.target.value)} />
+                                </div>
+                                
+                                {/* Slots Input */}
+                                <div className="relative w-24">
+                                    <Hash className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                                    <Input type="number" placeholder="Slots" className="pl-8 h-9 bg-white" value={slots.bike} onChange={(e) => handleSlotChange('bike', e.target.value)} />
+                                </div>
                             </div>
                         )}
+
                         {vehicleTypes.car && (
                             <div className="flex items-center gap-3">
-                                <span className="text-sm font-medium w-20">Car</span>
-                                <div className="relative flex-1"><IndianRupee className="absolute left-3 top-2.5 h-3.5 w-3.5 text-slate-400" /><Input type="number" className="pl-8 h-9 bg-white" value={prices.car} onChange={(e) => handlePriceChange('car', e.target.value)} /></div>
+                                <div className="w-8 flex justify-center text-slate-500"><Car size={20} /></div>
+                                <div className="text-sm font-medium text-slate-700 w-12">Car</div>
+                                
+                                <div className="relative flex-1">
+                                    <IndianRupee className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                                    <Input type="number" placeholder="Price/hr" className="pl-8 h-9 bg-white" value={prices.car} onChange={(e) => handlePriceChange('car', e.target.value)} />
+                                </div>
+                                
+                                <div className="relative w-24">
+                                    <Hash className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                                    <Input type="number" placeholder="Slots" className="pl-8 h-9 bg-white" value={slots.car} onChange={(e) => handleSlotChange('car', e.target.value)} />
+                                </div>
                             </div>
                         )}
+
                         {vehicleTypes.suv && (
                             <div className="flex items-center gap-3">
-                                <span className="text-sm font-medium w-20">SUV</span>
-                                <div className="relative flex-1"><IndianRupee className="absolute left-3 top-2.5 h-3.5 w-3.5 text-slate-400" /><Input type="number" className="pl-8 h-9 bg-white" value={prices.suv} onChange={(e) => handlePriceChange('suv', e.target.value)} /></div>
+                                <div className="w-8 flex justify-center text-slate-500"><Truck size={20} /></div>
+                                <div className="text-sm font-medium text-slate-700 w-12">SUV</div>
+                                
+                                <div className="relative flex-1">
+                                    <IndianRupee className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                                    <Input type="number" placeholder="Price/hr" className="pl-8 h-9 bg-white" value={prices.suv} onChange={(e) => handlePriceChange('suv', e.target.value)} />
+                                </div>
+                                
+                                <div className="relative w-24">
+                                    <Hash className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                                    <Input type="number" placeholder="Slots" className="pl-8 h-9 bg-white" value={slots.suv} onChange={(e) => handleSlotChange('suv', e.target.value)} />
+                                </div>
                             </div>
                         )}
                     </div>
@@ -473,7 +532,6 @@ export default function RegisterSpace() {
 
               {/* 4. Flood Safety (Manual Toggle Only) */}
               <Card className="border-0 shadow-md bg-blue-50/50 border-blue-100 relative overflow-hidden">
-                 <div className="absolute -right-10 -top-10 w-40 h-40 bg-blue-200/30 rounded-full blur-3xl pointer-events-none" />
                  <CardContent className="p-6 space-y-4 relative z-10">
                     <div className="flex items-start gap-3">
                        <div className="p-2 bg-blue-100 rounded-lg text-blue-600"><Umbrella size={24} /></div>

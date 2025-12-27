@@ -110,6 +110,9 @@ export default function Browse() {
   const [showStormIntro, setShowStormIntro] = useState(false);
   const [mapCenter, setMapCenter] = useState<[number, number]>([13.0827, 80.2707]);
 
+  // Helper to safely get avatar URL without TS errors
+  const userAvatar = user?.user_metadata?.avatar_url || (user as any)?.avatar_url;
+
   // 1. DATA FETCHING
   useEffect(() => {
     const fetchData = async () => {
@@ -126,7 +129,7 @@ export default function Browse() {
       if (user) {
         const { data: bookData } = await supabase
           .from('bookings')
-          .select('*, parking_spaces(title, address, city)')
+          .select('*, parking_spaces(title, address_street, city)') // Adjusted query to match typical relations
           .eq('driver_id', user.id)
           .order('start_time', { ascending: false });
         setMyBookings(bookData || []);
@@ -192,7 +195,7 @@ export default function Browse() {
 
       {/* HEADER WITH PROFILE & BOOKINGS BUTTONS */}
       <header className="relative z-20 p-4 flex justify-between items-center pointer-events-none">
-        <div className="pointer-events-auto bg-white/90 p-2 rounded-full shadow-lg" onClick={() => navigate('/')}>
+        <div className="pointer-events-auto bg-white/90 p-2 rounded-full shadow-lg cursor-pointer" onClick={() => navigate('/')}>
           <Logo color={sosMode ? 'light' : 'dark'} size="sm" />
         </div>
         
@@ -206,6 +209,7 @@ export default function Browse() {
             <Clock size={16} className="mr-2" /> My Bookings
           </Button>
 
+          {/* Profile Icon with Safety Check for Types */}
           <div 
             onClick={() => navigate('/profile')}
             className={`h-10 w-10 rounded-full flex items-center justify-center cursor-pointer shadow-lg transition-all border-2 overflow-hidden ${
@@ -214,9 +218,9 @@ export default function Browse() {
                 : 'bg-white/90 border-transparent text-slate-700'
             }`}
           >
-            {user?.user_metadata?.avatar_url || user?.avatar_url ? (
+            {userAvatar ? (
               <img 
-                src={user?.user_metadata?.avatar_url || user?.avatar_url} 
+                src={userAvatar} 
                 alt="Profile" 
                 className="h-full w-full object-cover" 
               />
@@ -244,14 +248,14 @@ export default function Browse() {
                       <motion.div 
                         key={booking.id}
                         whileTap={{ scale: 0.95 }}
-                        onClick={() => navigate(`/booking-details/${booking.id}`)}
+                        onClick={() => navigate(`/booking-details/${booking.id}`)} // Or whatever your booking detail route is
                         className={`min-w-[180px] p-3 rounded-2xl border flex items-center gap-3 ${sosMode ? 'bg-blue-500/10 border-blue-500/20' : 'bg-emerald-50/50 border-emerald-100'}`}
                       >
                         <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${sosMode ? 'bg-blue-600/20 text-blue-400' : 'bg-white text-emerald-600 shadow-sm'}`}>
                           <Calendar size={16} />
                         </div>
                         <div className="min-w-0">
-                          <p className="text-xs font-bold truncate">{booking.parking_spaces?.title}</p>
+                          <p className="text-xs font-bold truncate">{booking.parking_spaces?.title || 'Parking Spot'}</p>
                           <p className="text-[9px] font-bold uppercase opacity-60">{booking.status || 'Confirmed'}</p>
                         </div>
                       </motion.div>

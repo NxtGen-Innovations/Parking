@@ -11,8 +11,9 @@ import RegisterSpace from "./pages/RegisterSpace";
 import Browse from "./pages/Browse";
 import Booking from "./pages/Booking";
 import ProviderDashboard from "./pages/ProviderDashboard";
-import MyBookings from "./pages/MyBookings"; // NEW
-import Navigation from "./pages/Navigation"; // NEW
+import MyBookings from "./pages/MyBookings";
+import Navigation from "./pages/Navigation";
+import SpaceDashboard from "./pages/SpaceDashboard"; // NEW IMPORT
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -86,7 +87,16 @@ function AppRoutes() {
         }
       />
 
-      {/* NEW ROUTES ADDED HERE */}
+      {/* NEW: Detailed Space Dashboard for Providers */}
+      <Route
+        path="/space-dashboard/:id"
+        element={
+          <ProtectedRoute>
+            <SpaceDashboard />
+          </ProtectedRoute>
+        }
+      />
+
       <Route
         path="/my-bookings"
         element={
