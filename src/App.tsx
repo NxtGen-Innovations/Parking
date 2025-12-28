@@ -13,7 +13,8 @@ import Booking from "./pages/Booking";
 import ProviderDashboard from "./pages/ProviderDashboard";
 import MyBookings from "./pages/MyBookings";
 import Navigation from "./pages/Navigation";
-import SpaceDashboard from "./pages/SpaceDashboard"; // NEW IMPORT
+import SpaceDashboard from "./pages/SpaceDashboard";
+import ScanQR from "./pages/ScanQR"; // NEW IMPORT
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -39,9 +40,11 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 function AppRoutes() {
   return (
     <Routes>
+      {/* Public Routes */}
       <Route path="/" element={<Index />} />
       <Route path="/auth" element={<Auth />} />
       
+      {/* Protected Routes */}
       <Route
         path="/choose-role"
         element={
@@ -51,6 +54,7 @@ function AppRoutes() {
         }
       />
       
+      {/* Provider Routes */}
       <Route
         path="/register-space"
         element={
@@ -59,25 +63,6 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       />
-      
-      <Route
-        path="/browse"
-        element={
-          <ProtectedRoute>
-            <Browse />
-          </ProtectedRoute>
-        }
-      />
-      
-      <Route
-        path="/booking/:id"
-        element={
-          <ProtectedRoute>
-            <Booking />
-          </ProtectedRoute>
-        }
-      />
-      
       <Route
         path="/provider-dashboard"
         element={
@@ -86,8 +71,6 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       />
-
-      {/* NEW: Detailed Space Dashboard for Providers */}
       <Route
         path="/space-dashboard/:id"
         element={
@@ -97,6 +80,23 @@ function AppRoutes() {
         }
       />
 
+      {/* Driver Routes */}
+      <Route
+        path="/browse"
+        element={
+          <ProtectedRoute>
+            <Browse />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/booking/:id"
+        element={
+          <ProtectedRoute>
+            <Booking />
+          </ProtectedRoute>
+        }
+      />
       <Route
         path="/my-bookings"
         element={
@@ -105,7 +105,6 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       />
-      
       <Route
         path="/navigation/:bookingId"
         element={
@@ -114,7 +113,18 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       />
+      
+      {/* QR Scanner Route */}
+      <Route
+        path="/scan-qr"
+        element={
+          <ProtectedRoute>
+            <ScanQR />
+          </ProtectedRoute>
+        }
+      />
 
+      {/* 404 */}
       <Route path="*" element={<NotFound />} />
     </Routes>
   );

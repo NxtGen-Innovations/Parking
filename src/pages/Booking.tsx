@@ -9,7 +9,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { toast } from '@/hooks/use-toast';
 import { 
-  ArrowLeft, MapPin, Star, Clock, Car, Calendar, Check, 
+  ArrowLeft, MapPin, Star, Clock, Car, Bike, Truck, Calendar, Check, 
   LogOut, Shield, Umbrella, Video, UserCheck, Loader2, IndianRupee, Navigation as NavIcon 
 } from 'lucide-react';
 import { motion } from 'framer-motion';
@@ -21,7 +21,10 @@ interface Spot {
   title: string;
   address_street: string;
   city: string;
-  price_car: number;
+  // Prices can be null if that vehicle type isn't supported
+  price_car: number | null;
+  price_bike: number | null;
+  price_suv: number | null;
   rating: number; 
   images: string[];
   description: string;
@@ -30,6 +33,8 @@ interface Spot {
   is_flood_safe: boolean;
   owner_id: string;
 }
+
+type VehicleType = 'car' | 'bike' | 'suv';
 
 export default function Booking() {
   const navigate = useNavigate();
@@ -42,9 +47,11 @@ export default function Booking() {
   const [isSuccess, setIsSuccess] = useState(false);
   const [confirmedBookingId, setConfirmedBookingId] = useState<string | null>(null);
 
+  // Form State
   const [date, setDate] = useState('');
   const [startTime, setStartTime] = useState('');
   const [duration, setDuration] = useState('2');
+  const [vehicleType, setVehicleType] = useState<VehicleType>('car');
 
   useEffect(() => {
     const fetchSpot = async () => {
@@ -58,6 +65,12 @@ export default function Booking() {
 
         if (error) throw error;
         setSpot(data);
+        
+        // Auto-select the first available vehicle type
+        if (data.price_car) setVehicleType('car');
+        else if (data.price_bike) setVehicleType('bike');
+        else if (data.price_suv) setVehicleType('suv');
+
       } catch (error) {
         console.error("Error fetching spot:", error);
         toast({ title: "Error", description: "Could not load parking spot details.", variant: "destructive" });
@@ -74,7 +87,16 @@ export default function Booking() {
     navigate('/auth?mode=login');
   };
 
-  const hourlyRate = spot?.price_car || 50; 
+  // Dynamic Price Calculation based on selection
+  const getHourlyRate = () => {
+    if (!spot) return 0;
+    if (vehicleType === 'car') return spot.price_car || 0;
+    if (vehicleType === 'bike') return spot.price_bike || 0;
+    if (vehicleType === 'suv') return spot.price_suv || 0;
+    return 0;
+  };
+
+  const hourlyRate = getHourlyRate();
   const totalPrice = hourlyRate * parseInt(duration || '0');
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -98,6 +120,7 @@ export default function Booking() {
         start_time: startDateTime.toISOString(),
         end_time: endDateTime.toISOString(),
         total_price: totalPrice,
+        vehicle_type: vehicleType, // Saving the selected vehicle type
         status: 'confirmed'
       };
 
@@ -151,6 +174,10 @@ export default function Booking() {
                   <span className="text-xs text-slate-500 uppercase tracking-wider">Time</span>
                   <span className="font-semibold text-slate-900">{startTime} ({duration} hrs)</span>
                 </div>
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-xs text-slate-500 uppercase tracking-wider">Vehicle</span>
+                  <span className="font-semibold text-slate-900 capitalize">{vehicleType}</span>
+                </div>
                 <div className="flex justify-between items-center pt-2 border-t border-slate-200 mt-2">
                   <span className="text-sm font-bold text-slate-700">Total Paid</span>
                   <span className="text-lg font-bold text-emerald-600">₹{totalPrice}</span>
@@ -199,6 +226,8 @@ export default function Booking() {
       <main className="relative z-10 flex-1 px-4 py-6">
         <div className="max-w-5xl mx-auto">
           <div className="grid lg:grid-cols-2 gap-8">
+            
+            {/* LEFT: Details */}
             <motion.div initial={{ x: -20, opacity: 0 }} animate={{ x: 0, opacity: 1 }}>
               <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-xl overflow-hidden rounded-3xl h-full">
                 <div className="h-64 w-full bg-slate-200 relative">
@@ -220,27 +249,77 @@ export default function Booking() {
                       <div className="flex items-center gap-2 text-sm text-slate-600"><Shield size={16} className="text-emerald-500" /> Gated Complex</div>
                     </div>
                   </div>
-                  <div className="pt-6 border-t border-slate-200"><div className="text-sm text-slate-500 mb-1">Price per hour</div><div className="text-3xl font-bold text-emerald-600">₹{hourlyRate}</div></div>
+                  <div className="pt-6 border-t border-slate-200">
+                    <div className="text-sm text-slate-500 mb-1">Base Prices</div>
+                    <div className="flex gap-4">
+                        {spot.price_bike && <div className="text-sm"><span className="font-bold text-slate-800">₹{spot.price_bike}</span> <span className="text-xs text-slate-400">Bike</span></div>}
+                        {spot.price_car && <div className="text-sm"><span className="font-bold text-slate-800">₹{spot.price_car}</span> <span className="text-xs text-slate-400">Car</span></div>}
+                        {spot.price_suv && <div className="text-sm"><span className="font-bold text-slate-800">₹{spot.price_suv}</span> <span className="text-xs text-slate-400">SUV</span></div>}
+                    </div>
+                  </div>
                 </CardContent>
               </Card>
             </motion.div>
 
+            {/* RIGHT: Booking Form */}
             <motion.div initial={{ x: 20, opacity: 0 }} animate={{ x: 0, opacity: 1 }} transition={{ delay: 0.1 }}>
               <Card className="border-0 shadow-xl bg-white rounded-3xl overflow-hidden sticky top-24">
                 <CardHeader className="bg-slate-900 text-white p-6"><CardTitle className="text-xl font-bold flex items-center gap-2"><Calendar className="text-emerald-400" /> Reserve your spot</CardTitle></CardHeader>
                 <CardContent className="p-8 space-y-6">
                   <form onSubmit={handleSubmit} className="space-y-6">
+                    
+                    {/* VEHICLE SELECTOR */}
+                    <div className="space-y-2">
+                      <Label className="text-slate-700 font-semibold">Select Vehicle</Label>
+                      <div className="grid grid-cols-3 gap-2">
+                        {spot.price_bike && (
+                          <div 
+                            onClick={() => setVehicleType('bike')}
+                            className={`cursor-pointer rounded-xl border-2 p-3 flex flex-col items-center justify-center gap-1 transition-all ${vehicleType === 'bike' ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : 'border-slate-100 bg-white hover:border-slate-300'}`}
+                          >
+                            <Bike size={24} />
+                            <span className="text-[10px] font-bold uppercase">Bike</span>
+                            <span className="text-xs font-medium">₹{spot.price_bike}</span>
+                          </div>
+                        )}
+                        {spot.price_car && (
+                          <div 
+                            onClick={() => setVehicleType('car')}
+                            className={`cursor-pointer rounded-xl border-2 p-3 flex flex-col items-center justify-center gap-1 transition-all ${vehicleType === 'car' ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : 'border-slate-100 bg-white hover:border-slate-300'}`}
+                          >
+                            <Car size={24} />
+                            <span className="text-[10px] font-bold uppercase">Car</span>
+                            <span className="text-xs font-medium">₹{spot.price_car}</span>
+                          </div>
+                        )}
+                        {spot.price_suv && (
+                          <div 
+                            onClick={() => setVehicleType('suv')}
+                            className={`cursor-pointer rounded-xl border-2 p-3 flex flex-col items-center justify-center gap-1 transition-all ${vehicleType === 'suv' ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : 'border-slate-100 bg-white hover:border-slate-300'}`}
+                          >
+                            <Truck size={24} />
+                            <span className="text-[10px] font-bold uppercase">SUV</span>
+                            <span className="text-xs font-medium">₹{spot.price_suv}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
                     <div className="space-y-2"><Label htmlFor="date" className="text-slate-700 font-semibold">Date</Label><div className="relative"><Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-400" /><Input id="date" type="date" value={date} onChange={(e) => setDate(e.target.value)} className="pl-10 h-12 bg-slate-50 border-slate-200 focus:border-emerald-500" required /></div></div>
+                    
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2"><Label htmlFor="time" className="text-slate-700 font-semibold">Start Time</Label><div className="relative"><Clock className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-400" /><Input id="time" type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} className="pl-10 h-12 bg-slate-50 border-slate-200 focus:border-emerald-500" required /></div></div>
                       <div className="space-y-2"><Label htmlFor="duration" className="text-slate-700 font-semibold">Duration (Hours)</Label><div className="relative"><Car className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-400" /><Input id="duration" type="number" min="1" max="24" value={duration} onChange={(e) => setDuration(e.target.value)} className="pl-10 h-12 bg-slate-50 border-slate-200 focus:border-emerald-500" required /></div></div>
                     </div>
+
                     <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-3">
+                      <div className="flex justify-between text-sm text-slate-600"><span>Vehicle</span><span className="uppercase font-bold text-slate-700">{vehicleType}</span></div>
                       <div className="flex justify-between text-sm text-slate-600"><span>Rate</span><span>₹{hourlyRate} x {duration} hrs</span></div>
                       <div className="flex justify-between text-sm text-slate-600"><span>Platform Fee</span><span>₹10</span></div>
                       <div className="h-px bg-slate-200 my-2" />
                       <div className="flex justify-between text-lg font-bold text-slate-900"><span>Total to Pay</span><span>₹{totalPrice + 10}</span></div>
                     </div>
+                    
                     <Button type="submit" className="w-full h-14 text-lg font-bold rounded-xl bg-slate-900 hover:bg-slate-800 shadow-xl shadow-slate-900/20" disabled={isBooking}>{isBooking ? <span className="flex items-center gap-2"><Loader2 className="animate-spin" /> Processing...</span> : 'Confirm & Pay'}</Button>
                   </form>
                 </CardContent>

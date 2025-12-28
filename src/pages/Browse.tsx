@@ -19,7 +19,9 @@ import {
   Calendar,
   Grid3X3,
   Clock,
-  User
+  User,
+  MapPin, // Icon for distance
+  Search
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -38,6 +40,7 @@ interface ParkingSpace {
   is_active: boolean;
   city?: string;
   displayPrice?: number;
+  distance?: number; // Distance in KM
 }
 
 interface Booking {
@@ -58,26 +61,41 @@ const TOMTOM_API_KEY = "LH8w4oyNpv19Ok0SDqxyayikvpw5DrTC";
 const DARK_MAP = `https://api.tomtom.com/map/1/tile/basic/night/{z}/{x}/{y}.png?key=${TOMTOM_API_KEY}`;
 const LIGHT_MAP = `https://api.tomtom.com/map/1/tile/basic/main/{z}/{x}/{y}.png?key=${TOMTOM_API_KEY}`;
 
-// --- CUSTOM MARKER ICONS ---
+// --- UTILS: Haversine Distance Calculation ---
+const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+  if (!lat1 || !lon1 || !lat2 || !lon2) return 9999; 
+  const toRad = (value: number) => (value * Math.PI) / 180;
+  const R = 6371; // Earth Radius in km
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c; // Result in KM
+};
+
+// --- CUSTOM MAP MARKER ---
 const createParkingIcon = (price: number, isSelected: boolean, isSafeMode: boolean) => {
   const bgColor = isSafeMode ? '#3b82f6' : (isSelected ? '#10b981' : '#1e293b');
   return L.divIcon({
     className: 'custom-pin',
     html: `
-      <div style="background-color: ${bgColor}; color: white; padding: 6px 12px; border-radius: 12px; font-weight: 800; font-size: 13px; border: 2px solid white; display: flex; align-items: center; gap: 4px; box-shadow: 0 4px 10px rgba(0,0,0,0.3);">
+      <div style="background-color: ${bgColor}; color: white; padding: 6px 10px; border-radius: 8px; font-weight: 800; font-size: 12px; border: 2px solid white; display: flex; align-items: center; gap: 4px; box-shadow: 0 4px 10px rgba(0,0,0,0.3);">
         ${isSafeMode ? '🛡️' : ''} ₹${price}
       </div>
-      <div style="width: 0; height: 0; border-left: 8px solid transparent; border-right: 8px solid transparent; border-top: 10px solid ${bgColor}; margin: -4px auto 0;"></div>
+      <div style="width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 8px solid ${bgColor}; margin: -2px auto 0;"></div>
     `,
     iconSize: [50, 50],
-    iconAnchor: [25, 50],
+    iconAnchor: [25, 45],
   });
 };
 
 function MapUpdater({ center }: { center: [number, number] }) {
   const map = useMap();
   useEffect(() => {
-    map.flyTo(center, 14, { duration: 2 });
+    map.flyTo(center, 14, { duration: 1.5 });
   }, [center, map]);
   return null;
 }
@@ -108,46 +126,56 @@ export default function Browse() {
   const [selectedSpot, setSelectedSpot] = useState<string | null>(null);
   const [sosMode, setSosMode] = useState(false);
   const [showStormIntro, setShowStormIntro] = useState(false);
+  
+  // Search Center (Defaults to Chennai)
   const [mapCenter, setMapCenter] = useState<[number, number]>([13.0827, 80.2707]);
 
-  // Helper to safely get avatar URL without TS errors
   const userAvatar = user?.user_metadata?.avatar_url || (user as any)?.avatar_url;
 
   // 1. DATA FETCHING
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
-      
-      // Fetch Spaces
-      const { data: spaceData } = await supabase
-        .from('parking_spaces')
-        .select('*')
-        .eq('is_active', true);
+      const { data: spaceData } = await supabase.from('parking_spaces').select('*').eq('is_active', true);
       setSpaces(spaceData || []);
 
-      // Fetch Recent User Bookings
       if (user) {
         const { data: bookData } = await supabase
           .from('bookings')
-          .select('*, parking_spaces(title, address_street, city)') // Adjusted query to match typical relations
+          .select('*, parking_spaces(title, address_street, city)')
           .eq('driver_id', user.id)
           .order('start_time', { ascending: false });
         setMyBookings(bookData || []);
       }
-      
       setLoading(false);
     };
     fetchData();
   }, [user]);
 
-  // 2. FILTER & PRICING LOGIC
+  // 2. LOGIC: Filter, Calculate Distance, Sort
   const filteredSpots = useMemo(() => {
+    // A. Filter SOS Mode
     const list = spaces.filter(s => sosMode ? s.is_flood_safe : true);
-    return list.map(s => ({
-      ...s,
-      displayPrice: sosMode ? Math.round((s.price_car || 0) * 1.5) : (s.price_car || 0),
-    })).sort((a, b) => a.id === selectedSpot ? -1 : 1);
-  }, [spaces, sosMode, selectedSpot]);
+
+    // B. Calculate Distance & Pricing
+    const listWithMetrics = list.map(s => {
+      const dist = calculateDistance(mapCenter[0], mapCenter[1], s.latitude, s.longitude);
+      return {
+        ...s,
+        displayPrice: sosMode ? Math.round((s.price_car || 0) * 1.5) : (s.price_car || 0),
+        distance: dist
+      };
+    });
+
+    // C. Sort: Nearest First (Ascending Distance)
+    return listWithMetrics.sort((a, b) => {
+      // If user clicked a pin, show that first
+      if (a.id === selectedSpot) return -1;
+      if (b.id === selectedSpot) return 1;
+      // Otherwise sort by distance
+      return (a.distance || 0) - (b.distance || 0);
+    });
+  }, [spaces, sosMode, selectedSpot, mapCenter]);
 
   const handleToggleStorm = () => {
     if (!sosMode) {
@@ -168,8 +196,9 @@ export default function Browse() {
       const data = await response.json();
       if (data.results?.length > 0) {
         const { lat, lon } = data.results[0].position;
-        setMapCenter([lat, lon]);
-        setShowResults(true);
+        setMapCenter([lat, lon]); // Update Map Center
+        setShowResults(true); // Open List
+        setSelectedSpot(null); // Reset manual selection
       }
     } finally { setIsSearching(false); }
   };
@@ -193,9 +222,9 @@ export default function Browse() {
         </MapContainer>
       </div>
 
-      {/* HEADER WITH PROFILE & BOOKINGS BUTTONS */}
+      {/* HEADER */}
       <header className="relative z-20 p-4 flex justify-between items-center pointer-events-none">
-        <div className="pointer-events-auto bg-white/90 p-2 rounded-full shadow-lg cursor-pointer" onClick={() => navigate('/')}>
+        <div className="pointer-events-auto bg-white/90 p-2 rounded-full shadow-lg cursor-pointer hover:scale-105 transition-transform" onClick={() => navigate('/')}>
           <Logo color={sosMode ? 'light' : 'dark'} size="sm" />
         </div>
         
@@ -209,21 +238,14 @@ export default function Browse() {
             <Clock size={16} className="mr-2" /> My Bookings
           </Button>
 
-          {/* Profile Icon with Safety Check for Types */}
           <div 
             onClick={() => navigate('/profile')}
             className={`h-10 w-10 rounded-full flex items-center justify-center cursor-pointer shadow-lg transition-all border-2 overflow-hidden ${
-              sosMode 
-                ? 'bg-slate-900/80 border-blue-500/30 text-blue-400' 
-                : 'bg-white/90 border-transparent text-slate-700'
+              sosMode ? 'bg-slate-900/80 border-blue-500/30 text-blue-400' : 'bg-white/90 border-transparent text-slate-700'
             }`}
           >
             {userAvatar ? (
-              <img 
-                src={userAvatar} 
-                alt="Profile" 
-                className="h-full w-full object-cover" 
-              />
+              <img src={userAvatar} alt="Profile" className="h-full w-full object-cover" />
             ) : (
               <User size={20} />
             )}
@@ -236,7 +258,7 @@ export default function Browse() {
           <Card className={`rounded-[32px] border-0 shadow-2xl backdrop-blur-xl transition-all duration-700 ${sosMode ? 'bg-slate-900/80 text-white border-blue-500/20' : 'bg-white/90 shadow-slate-200'}`}>
             <CardContent className="p-6">
               
-              {/* MY BOOKINGS SECTION */}
+              {/* MY BOOKINGS (Hide when results open) */}
               {user && myBookings.length > 0 && !showResults && (
                 <div className="mb-6">
                   <div className="flex justify-between items-center mb-3">
@@ -248,7 +270,7 @@ export default function Browse() {
                       <motion.div 
                         key={booking.id}
                         whileTap={{ scale: 0.95 }}
-                        onClick={() => navigate(`/booking-details/${booking.id}`)} // Or whatever your booking detail route is
+                        onClick={() => navigate(`/booking-details/${booking.id}`)}
                         className={`min-w-[180px] p-3 rounded-2xl border flex items-center gap-3 ${sosMode ? 'bg-blue-500/10 border-blue-500/20' : 'bg-emerald-50/50 border-emerald-100'}`}
                       >
                         <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${sosMode ? 'bg-blue-600/20 text-blue-400' : 'bg-white text-emerald-600 shadow-sm'}`}>
@@ -275,7 +297,7 @@ export default function Browse() {
               <form onSubmit={handleSearch} className={`flex items-center p-4 rounded-2xl border transition-all ${sosMode ? 'bg-slate-800 border-slate-700' : 'bg-slate-100 border-transparent focus-within:bg-white focus-within:border-emerald-500/30'}`}>
                 <input 
                   className="bg-transparent w-full outline-none font-medium text-lg placeholder:text-slate-400"
-                  placeholder="Enter destination"
+                  placeholder="Enter destination (e.g. T. Nagar)"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   onFocus={() => setShowResults(true)}
@@ -296,34 +318,53 @@ export default function Browse() {
               <div className="flex justify-between items-center mb-8 sticky top-0 z-10">
                 <h2 className="text-lg font-black flex items-center gap-2">
                   {sosMode ? <ShieldCheck className="text-blue-500" /> : <Grid3X3 size={20} />}
-                  {sosMode ? 'Flood-Safe Zones' : 'Available Spaces'}
+                  {sosMode ? 'Flood-Safe Zones' : 'Nearest Parking'}
                 </h2>
                 <Button variant="ghost" onClick={() => setShowResults(false)} className="rounded-full">Close</Button>
               </div>
 
               <div className="space-y-4">
-                {filteredSpots.map(spot => (
-                  <div 
-                    key={spot.id} 
-                    onClick={() => navigate(`/booking/${spot.id}`)}
-                    className={`flex gap-4 p-4 rounded-3xl border transition-all cursor-pointer ${sosMode ? 'bg-slate-800/50 border-slate-700' : 'bg-white border-slate-100 shadow-sm hover:shadow-md'}`}
-                  >
-                    <div className="w-20 h-20 rounded-2xl bg-slate-200 overflow-hidden shrink-0 shadow-inner">
-                      <img src={spot.images?.[0] || 'https://placehold.co/100'} className="w-full h-full object-cover" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex justify-between items-start">
-                        <h4 className="font-bold truncate text-base">{spot.title}</h4>
-                        <p className={`font-black ${sosMode ? 'text-blue-400' : 'text-emerald-700'}`}>₹{spot.displayPrice}</p>
+                {filteredSpots.length === 0 ? (
+                   <p className="text-center text-slate-500 py-10">No parking spots found nearby.</p>
+                ) : (
+                  filteredSpots.map(spot => (
+                    <div 
+                      key={spot.id} 
+                      onClick={() => navigate(`/booking/${spot.id}`)}
+                      className={`flex gap-4 p-4 rounded-3xl border transition-all cursor-pointer group ${sosMode ? 'bg-slate-800/50 border-slate-700' : 'bg-white border-slate-100 shadow-sm hover:shadow-md'}`}
+                    >
+                      {/* IMAGE & DISTANCE BADGE */}
+                      <div className="w-20 h-20 rounded-2xl bg-slate-200 overflow-hidden shrink-0 shadow-inner relative">
+                        <img src={spot.images?.[0] || 'https://placehold.co/100'} className="w-full h-full object-cover" />
+                        
+                        {/* 📍 DISTANCE DISPLAY OVERLAY */}
+                        <div className="absolute bottom-0 left-0 right-0 bg-black/60 backdrop-blur-sm text-white text-[9px] font-bold text-center py-1.5 flex items-center justify-center gap-1">
+                          <MapPin size={10} className="text-emerald-400" /> 
+                          {spot.distance ? `${spot.distance.toFixed(1)} km` : 'N/A'}
+                        </div>
                       </div>
-                      <p className="text-xs opacity-60 truncate mt-1">{spot.address}</p>
-                      <div className="flex gap-2 mt-3">
-                        {spot.is_flood_safe && <span className="text-[9px] font-black bg-blue-500 text-white px-2 py-0.5 rounded-md uppercase tracking-wider">Flood Safe</span>}
-                        <span className="text-[9px] font-bold bg-slate-500/10 px-2 py-0.5 rounded-md uppercase opacity-60">{spot.space_type}</span>
+
+                      <div className="flex-1 min-w-0">
+                        <div className="flex justify-between items-start">
+                          <h4 className="font-bold truncate text-base">{spot.title}</h4>
+                          <p className={`font-black ${sosMode ? 'text-blue-400' : 'text-emerald-700'}`}>₹{spot.displayPrice}</p>
+                        </div>
+                        
+                        {/* 📍 ADDRESS & DISTANCE TEXT */}
+                        <p className="text-xs opacity-60 truncate mt-1 flex items-center gap-1">
+                           <span>{spot.address}</span>
+                           <span className="w-1 h-1 rounded-full bg-slate-400" />
+                           <span className="text-emerald-600 font-bold">{spot.distance?.toFixed(1)} km away</span>
+                        </p>
+
+                        <div className="flex gap-2 mt-3">
+                          {spot.is_flood_safe && <span className="text-[9px] font-black bg-blue-500 text-white px-2 py-0.5 rounded-md uppercase tracking-wider">Flood Safe</span>}
+                          <span className="text-[9px] font-bold bg-slate-500/10 px-2 py-0.5 rounded-md uppercase opacity-60">{spot.space_type}</span>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  ))
+                )}
               </div>
             </motion.div>
           )}
