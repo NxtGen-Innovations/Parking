@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
-import { motion } from 'framer-motion';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -28,7 +28,10 @@ import {
   Building2,
   Home,
   Upload,
-  Hash // Added Hash icon for count
+  Hash,
+  Clock,      
+  ShieldCheck,
+  Loader2
 } from 'lucide-react';
 
 import BACKGROUND_IMAGE from '../assets/background-hero.jpg';
@@ -37,7 +40,6 @@ type SpaceType = 'private' | 'commercial';
 
 export default function RegisterSpace() {
   const navigate = useNavigate();
-  const location = useLocation();
   const [searchParams] = useSearchParams();
 
   // 1. CHECK FOR EDIT MODE
@@ -55,6 +57,16 @@ export default function RegisterSpace() {
   const [city, setCity] = useState('');
   const [pincode, setPincode] = useState('');
 
+  // Mandatory GPS States
+  const [lat, setLat] = useState<number | null>(null);
+  const [lng, setLng] = useState<number | null>(null);
+  const [isLocating, setIsLocating] = useState(false);
+
+  // Timing State
+  const [availabilityType, setAvailabilityType] = useState<'24/7' | 'custom'>('24/7');
+  const [availableFrom, setAvailableFrom] = useState('09:00');
+  const [availableTo, setAvailableTo] = useState('21:00');
+
   // Vehicle Selection
   const [vehicleTypes, setVehicleTypes] = useState<{ car: boolean; bike: boolean; suv: boolean }>({
     car: true,
@@ -63,25 +75,11 @@ export default function RegisterSpace() {
   });
 
   // Pricing State
-  const [prices, setPrices] = useState({
-    car: '',
-    bike: '',
-    suv: ''
-  });
-
-  // NEW: Slot Count State
-  const [slots, setSlots] = useState({
-    car: '',
-    bike: '',
-    suv: ''
-  });
+  const [prices, setPrices] = useState({ car: '', bike: '', suv: '' });
+  const [slots, setSlots] = useState({ car: '', bike: '', suv: '' });
 
   const [description, setDescription] = useState('');
   
-  // Flood Safety
-  const [floorLevel, setFloorLevel] = useState('0');
-  const [isFloodSafe, setIsFloodSafe] = useState(false);
-
   // Commercial Specifics
   const [businessName, setBusinessName] = useState('');
   const [gstNumber, setGstNumber] = useState('');
@@ -100,6 +98,10 @@ export default function RegisterSpace() {
 
   const [isLoading, setIsLoading] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
+
+  // Elevation Verification States
+  const [isVerifyingElevation, setIsVerifyingElevation] = useState(false);
+  const [elevationData, setElevationData] = useState<{ elevation: number; isSafe: boolean } | null>(null);
 
   // 2. FETCH EXISTING DATA IF EDITING
   useEffect(() => {
@@ -130,6 +132,13 @@ export default function RegisterSpace() {
       setPincode(data.pincode || ''); 
       setDescription(data.description || '');
 
+      setLat(data.latitude);
+      setLng(data.longitude);
+
+      setAvailabilityType(data.availability_type || '24/7');
+      if (data.available_from) setAvailableFrom(data.available_from.slice(0, 5));
+      if (data.available_to) setAvailableTo(data.available_to.slice(0, 5));
+
       setVehicleTypes({
         car: data.price_car !== null,
         bike: data.price_bike !== null,
@@ -141,9 +150,6 @@ export default function RegisterSpace() {
         suv: data.price_suv ? String(data.price_suv) : '',
       });
 
-      // Populate Slots (Assuming columns exist or using fallback logic if schema not updated yet)
-      // Note: You need to add 'slots_car', 'slots_bike', 'slots_suv' to DB schema to persist this fully.
-      // For now, storing locally in state. 
       if (data.slots_car) setSlots(prev => ({...prev, car: String(data.slots_car)}));
       if (data.slots_bike) setSlots(prev => ({...prev, bike: String(data.slots_bike)}));
       if (data.slots_suv) setSlots(prev => ({...prev, suv: String(data.slots_suv)}));
@@ -151,9 +157,6 @@ export default function RegisterSpace() {
       setSecurityCCTV(data.has_cctv);
       setSecurityGuard(data.has_guard);
       setInstantEntry(data.has_auto_entry);
-
-      setFloorLevel(data.floor_level || '0');
-      setIsFloodSafe(data.is_flood_safe);
 
       if (data.space_type === 'commercial') {
         setBusinessName(data.business_name || '');
@@ -210,26 +213,101 @@ export default function RegisterSpace() {
     setExistingImages((p) => p.filter((_, i) => i !== index));
   };
 
+  // --- UPDATED: GPS Detection + Smarter Geocoding ---
   const detectCurrentLocation = () => {
     if (!navigator.geolocation) return;
-    toast({ title: 'Locating...', description: 'Getting your coordinates.' });
+    
+    setIsLocating(true);
+    toast({ title: 'Locating...', description: 'Getting exact coordinates via GPS.' });
+    
     navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setAddrStreet(`${pos.coords.latitude.toFixed(4)}, ${pos.coords.longitude.toFixed(4)}`);
-        setAddrLandmark("Detected via GPS");
-        toast({ title: 'Location Found', description: 'Coordinates filled in Street field.' });
+      async (pos) => {
+        const latitude = pos.coords.latitude;
+        const longitude = pos.coords.longitude;
+        
+        setLat(latitude);
+        setLng(longitude);
+
+        // REVERSE GEOCODING (OpenStreetMap Nominatim)
+        try {
+            toast({ title: 'Fetching Address...', description: 'Decoding GPS to address.' });
+            const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`);
+            const data = await response.json();
+            
+            if (data && data.address) {
+                const a = data.address;
+
+                // 1. DOOR NUMBER (Rare, but we check)
+                if (a.house_number) setAddrDoor(a.house_number);
+
+                // 2. STREET NAME (Improved Logic)
+                // Priority: Specific Road -> Building Name (Amenity) -> Area Name (Suburb) -> Display Name
+                let detectedStreet = a.road || a.pedestrian || a.path || a.amenity || a.building || a.suburb || a.neighbourhood || '';
+                
+                // If everything above is empty, use the first part of the full display name (e.g. "SRM University")
+                if (!detectedStreet && data.display_name) {
+                    detectedStreet = data.display_name.split(',')[0];
+                }
+                
+                if (detectedStreet) setAddrStreet(detectedStreet);
+
+                // 3. CITY (Logic to catch City > Town > Village)
+                const detectedCity = a.city || a.town || a.village || a.city_district || a.county || '';
+                if (detectedCity) setCity(detectedCity);
+
+                // 4. PINCODE
+                if (a.postcode) setPincode(a.postcode);
+
+                // 5. LANDMARK
+                const detectedLandmark = a.suburb || a.neighbourhood || a.commercial || a.industrial || '';
+                if (detectedLandmark && detectedLandmark !== detectedStreet) setAddrLandmark(detectedLandmark);
+                
+                toast({ title: 'Address Auto-Filled', description: 'Address details updated from GPS.' });
+            }
+        } catch (error) {
+            console.error("Geocoding failed", error);
+            toast({ title: 'GPS Locked', description: 'Location saved. Please fill address details manually.' });
+        } finally {
+            setIsLocating(false);
+        }
       },
-      () => toast({ title: 'Error', description: 'Could not detect location.', variant: 'destructive' })
+      () => {
+          setIsLocating(false);
+          toast({ title: 'GPS Error', description: 'Could not detect location. Check permissions.', variant: 'destructive' });
+      }
     );
   };
 
-  // --- SUBMISSION ---
-  const handleSubmit = async (e: React.FormEvent) => {
+  // --- NEW: Verify Elevation (Open-Meteo) ---
+  const verifyElevation = async () => {
+    if (lat === null || lng === null) return;
+    setIsVerifyingElevation(true);
+    try {
+      const response = await fetch(`https://api.open-meteo.com/v1/elevation?latitude=${lat}&longitude=${lng}`);
+      const data = await response.json();
+      const elevation = data.elevation?.[0] || 0;
+      
+      // Chennai Specific Logic: >10m is generally flood safe
+      setElevationData({
+        elevation,
+        isSafe: elevation >= 10
+      });
+    } catch (error) {
+      console.error(error);
+      toast({ title: "Elevation check failed", description: "Defaulting to standard listing.", variant: "destructive" });
+      submitFinalData(false);
+    } finally {
+      setIsVerifyingElevation(false);
+    }
+  };
+
+  // --- UPDATED: Submission Handler ---
+  const handleSubmitTrigger = (e: React.FormEvent) => {
     e.preventDefault();
     
     // VALIDATION
     if (!title || !addrStreet || !city || !pincode) {
-      toast({ title: 'Missing Fields', description: 'Please fill in title, address, and pincode.', variant: 'destructive' });
+      toast({ title: 'Missing Info', description: 'Basic address fields are mandatory.', variant: 'destructive' });
       return;
     }
     
@@ -238,14 +316,27 @@ export default function RegisterSpace() {
       return;
     }
 
+    // MANDATORY GPS
+    if (lat === null || lng === null) {
+      toast({ title: 'GPS Verification Required', description: 'Please click "Verify GPS" to lock the location.', variant: 'destructive' });
+      return;
+    }
+
     if (!verificationFile && !existingVerificationDoc) {
       toast({ title: 'Verification Required', description: 'Please upload Aadhaar, PAN, or Property Proof.', variant: 'destructive' });
       return;
     }
 
-    if (!user) return;
+    // Trigger Verification -> Opens Modal
+    verifyElevation();
+  };
 
+  // --- NEW: Final Data Submission (After Elevation Check) ---
+  const submitFinalData = async (optInStorm: boolean) => {
+    if (!user) return;
     setIsLoading(true);
+    const finalElevation = elevationData?.elevation || 0;
+    setElevationData(null); // Close modal
 
     try {
       // 1. Upload Space Images
@@ -278,7 +369,7 @@ export default function RegisterSpace() {
 
       const finalImages = [...existingImages, ...newImageUrls];
 
-      // 3. Prepare Payload
+      // 3. Prepare Payload (Updated with new fields)
       const payload = {
         title,
         space_type: providerType,
@@ -288,14 +379,23 @@ export default function RegisterSpace() {
         address_street: addrStreet,
         address_landmark: addrLandmark,
         city: city,
-        pincode: pincode, 
+        pincode: pincode,
+        latitude: lat,
+        longitude: lng,
         
+        elevation: finalElevation,
+        is_flood_safe: optInStorm, 
+        
+        availability_type: availabilityType,
+        available_from: availabilityType === 'custom' ? availableFrom : null,
+        available_to: availabilityType === 'custom' ? availableTo : null,
+
         // Prices
         price_car: vehicleTypes.car && prices.car ? parseFloat(prices.car) : null,
         price_bike: vehicleTypes.bike && prices.bike ? parseFloat(prices.bike) : null,
         price_suv: vehicleTypes.suv && prices.suv ? parseFloat(prices.suv) : null,
 
-        // NEW: Slot Counts
+        // Slots
         slots_car: vehicleTypes.car && slots.car ? parseInt(slots.car) : 0,
         slots_bike: vehicleTypes.bike && slots.bike ? parseInt(slots.bike) : 0,
         slots_suv: vehicleTypes.suv && slots.suv ? parseInt(slots.suv) : 0,
@@ -303,9 +403,6 @@ export default function RegisterSpace() {
         has_cctv: securityCCTV,
         has_guard: securityGuard,
         has_auto_entry: instantEntry,
-
-        floor_level: floorLevel,
-        is_flood_safe: isFloodSafe, 
 
         business_name: providerType === 'commercial' ? businessName : null,
         gst_number: providerType === 'commercial' ? gstNumber : null,
@@ -386,7 +483,7 @@ export default function RegisterSpace() {
              </div>
           </div>
 
-          <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
+          <form onSubmit={handleSubmitTrigger} className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
             
             {/* LEFT COLUMN */}
             <div className="lg:col-span-2 space-y-6">
@@ -397,7 +494,7 @@ export default function RegisterSpace() {
                   <button
                     type="button"
                     onClick={() => setProviderType('private')}
-                    className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-lg text-sm font-bold transition-all ${providerType === 'private' ? 'bg-white text-slate-900 shadow-sm ring-1 ring-black/5' : 'text-slate-500 hover:bg-white/50'}`}
+                    className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-lg text-sm font-bold transition-all ${providerType === 'private' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500 hover:bg-white/50'}`}
                   >
                     <Home size={18} className={providerType === 'private' ? 'text-blue-500' : ''} />
                     Private Space
@@ -405,7 +502,7 @@ export default function RegisterSpace() {
                   <button
                     type="button"
                     onClick={() => setProviderType('commercial')}
-                    className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-lg text-sm font-bold transition-all ${providerType === 'commercial' ? 'bg-white text-slate-900 shadow-sm ring-1 ring-black/5' : 'text-slate-500 hover:bg-white/50'}`}
+                    className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-lg text-sm font-bold transition-all ${providerType === 'commercial' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500 hover:bg-white/50'}`}
                   >
                     <Building2 size={18} className={providerType === 'commercial' ? 'text-emerald-500' : ''} />
                     Commercial
@@ -421,11 +518,28 @@ export default function RegisterSpace() {
                     <Input id="title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder={providerType === 'private' ? "e.g. My Driveway" : "e.g. Phoenix Mall Parking B1"} className="h-12 bg-white/80" />
                   </div>
 
+                  {/* UPDATED: GPS + REVERSE GEOCODING */}
                   <div className="space-y-4 pt-2">
                     <div className="flex justify-between items-center">
-                        <Label className="text-slate-700 font-semibold flex items-center gap-2"><MapPin size={16} /> Location Details</Label>
-                        <button type="button" onClick={detectCurrentLocation} className="text-xs font-bold text-emerald-600 flex items-center hover:text-emerald-700 bg-emerald-50 px-2 py-1 rounded cursor-pointer transition-colors"><Crosshair size={14} className="mr-1"/> Detect GPS</button>
+                        <Label className="text-slate-700 font-semibold flex items-center gap-2"><MapPin size={16} /> Location & GPS Lock</Label>
+                        <button type="button" onClick={detectCurrentLocation} disabled={isLocating} className={`text-xs font-bold flex items-center px-3 py-1.5 rounded cursor-pointer transition-colors ${lat ? 'bg-emerald-100 text-emerald-700' : 'bg-emerald-50 text-emerald-600 hover:text-emerald-700'}`}>
+                           {isLocating ? <Loader2 size={14} className="animate-spin mr-1"/> : <Crosshair size={14} className="mr-1"/>} 
+                           {isLocating ? 'Detecting...' : lat ? 'Location Verified' : 'Verify GPS *'}
+                        </button>
                     </div>
+
+                    {/* NEW: Lat/Lng Display Fields */}
+                    <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-1">
+                             <Label className="text-[10px] text-slate-400 uppercase font-bold">Latitude</Label>
+                             <Input readOnly value={lat || ''} placeholder="Detected via GPS" className="bg-slate-50/50 text-slate-500 border-slate-200" />
+                        </div>
+                        <div className="space-y-1">
+                             <Label className="text-[10px] text-slate-400 uppercase font-bold">Longitude</Label>
+                             <Input readOnly value={lng || ''} placeholder="Detected via GPS" className="bg-slate-50/50 text-slate-500 border-slate-200" />
+                        </div>
+                    </div>
+
                     <div className="grid grid-cols-4 gap-4">
                         <div className="col-span-1 space-y-2">
                             <Label className="text-xs text-slate-500">Door / Flat No</Label>
@@ -446,7 +560,6 @@ export default function RegisterSpace() {
                             <Input value={city} onChange={(e) => setCity(e.target.value)} placeholder="Chennai" className="bg-white/80" />
                         </div>
                     </div>
-                    {/* PINCODE FIELD */}
                     <div className="space-y-2">
                         <Label className="text-xs text-slate-500">Pincode</Label>
                         <Input value={pincode} onChange={(e) => setPincode(e.target.value)} placeholder="600001" className="bg-white/80" />
@@ -455,7 +568,24 @@ export default function RegisterSpace() {
                 </CardContent>
               </Card>
 
-              {/* 3. Vehicles, Pricing & SLOTS (Updated) */}
+              {/* 3. Operational Timing Card */}
+              <Card className="border-0 shadow-sm bg-white/60 backdrop-blur-xl border-white/50">
+                <CardContent className="p-6 space-y-4">
+                  <div className="flex items-center gap-2"><Clock size={20} className="text-slate-600"/><h3 className="font-bold text-slate-700">Operational Timing</h3></div>
+                  <div className="flex gap-2 p-1 bg-slate-100 rounded-xl">
+                    <button type="button" onClick={() => setAvailabilityType('24/7')} className={`flex-1 py-2 rounded-lg text-xs font-bold ${availabilityType === '24/7' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>24/7 Access</button>
+                    <button type="button" onClick={() => setAvailabilityType('custom')} className={`flex-1 py-2 rounded-lg text-xs font-bold ${availabilityType === 'custom' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>Custom Window</button>
+                  </div>
+                  {availabilityType === 'custom' && (
+                    <div className="grid grid-cols-2 gap-4 pt-2">
+                      <div className="space-y-1"><Label className="text-[10px] uppercase font-bold text-slate-400">Open From</Label><Input type="time" value={availableFrom} onChange={(e) => setAvailableFrom(e.target.value)} className="bg-white"/></div>
+                      <div className="space-y-1"><Label className="text-[10px] uppercase font-bold text-slate-400">Close At</Label><Input type="time" value={availableTo} onChange={(e) => setAvailableTo(e.target.value)} className="bg-white"/></div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* 4. Vehicles, Pricing & Slots */}
               <Card className="border-0 shadow-sm bg-white/60 backdrop-blur-xl border-white/50">
                  <CardContent className="p-6">
                     <Label className="text-slate-700 font-semibold mb-4 block">Vehicles, Pricing & Slots</Label>
@@ -474,91 +604,29 @@ export default function RegisterSpace() {
                     </div>
                     
                     <div className="space-y-4 bg-slate-50 p-4 rounded-xl border border-slate-100">
-                        {vehicleTypes.bike && (
-                            <div className="flex items-center gap-3">
-                                <div className="w-8 flex justify-center text-slate-500"><Bike size={20} /></div>
-                                <div className="text-sm font-medium text-slate-700 w-12">Bike</div>
-                                
-                                {/* Price Input */}
-                                <div className="relative flex-1">
-                                    <IndianRupee className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
-                                    <Input type="number" placeholder="Price/hr" className="pl-8 h-9 bg-white" value={prices.bike} onChange={(e) => handlePriceChange('bike', e.target.value)} />
+                        {['bike', 'car', 'suv'].map((type) => {
+                            if (!vehicleTypes[type as keyof typeof vehicleTypes]) return null;
+                            const Icon = type === 'bike' ? Bike : type === 'car' ? Car : Truck;
+                            return (
+                                <div key={type} className="flex items-center gap-3">
+                                    <div className="w-8 flex justify-center text-slate-500"><Icon size={20} /></div>
+                                    <div className="text-sm font-medium text-slate-700 w-12 capitalize">{type}</div>
+                                    <div className="relative flex-1">
+                                        <IndianRupee className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                                        <Input type="number" placeholder="Price/hr" className="pl-8 h-9 bg-white" value={prices[type as keyof typeof prices]} onChange={(e) => handlePriceChange(type as any, e.target.value)} />
+                                    </div>
+                                    <div className="relative w-24">
+                                        <Hash className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                                        <Input type="number" placeholder="Slots" className="pl-8 h-9 bg-white" value={slots[type as keyof typeof slots]} onChange={(e) => handleSlotChange(type as any, e.target.value)} />
+                                    </div>
                                 </div>
-                                
-                                {/* Slots Input */}
-                                <div className="relative w-24">
-                                    <Hash className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
-                                    <Input type="number" placeholder="Slots" className="pl-8 h-9 bg-white" value={slots.bike} onChange={(e) => handleSlotChange('bike', e.target.value)} />
-                                </div>
-                            </div>
-                        )}
-
-                        {vehicleTypes.car && (
-                            <div className="flex items-center gap-3">
-                                <div className="w-8 flex justify-center text-slate-500"><Car size={20} /></div>
-                                <div className="text-sm font-medium text-slate-700 w-12">Car</div>
-                                
-                                <div className="relative flex-1">
-                                    <IndianRupee className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
-                                    <Input type="number" placeholder="Price/hr" className="pl-8 h-9 bg-white" value={prices.car} onChange={(e) => handlePriceChange('car', e.target.value)} />
-                                </div>
-                                
-                                <div className="relative w-24">
-                                    <Hash className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
-                                    <Input type="number" placeholder="Slots" className="pl-8 h-9 bg-white" value={slots.car} onChange={(e) => handleSlotChange('car', e.target.value)} />
-                                </div>
-                            </div>
-                        )}
-
-                        {vehicleTypes.suv && (
-                            <div className="flex items-center gap-3">
-                                <div className="w-8 flex justify-center text-slate-500"><Truck size={20} /></div>
-                                <div className="text-sm font-medium text-slate-700 w-12">SUV</div>
-                                
-                                <div className="relative flex-1">
-                                    <IndianRupee className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
-                                    <Input type="number" placeholder="Price/hr" className="pl-8 h-9 bg-white" value={prices.suv} onChange={(e) => handlePriceChange('suv', e.target.value)} />
-                                </div>
-                                
-                                <div className="relative w-24">
-                                    <Hash className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
-                                    <Input type="number" placeholder="Slots" className="pl-8 h-9 bg-white" value={slots.suv} onChange={(e) => handleSlotChange('suv', e.target.value)} />
-                                </div>
-                            </div>
-                        )}
+                            );
+                        })}
                     </div>
                  </CardContent>
               </Card>
 
-              {/* 4. Flood Safety (Manual Toggle Only) */}
-              <Card className="border-0 shadow-md bg-blue-50/50 border-blue-100 relative overflow-hidden">
-                 <CardContent className="p-6 space-y-4 relative z-10">
-                    <div className="flex items-start gap-3">
-                       <div className="p-2 bg-blue-100 rounded-lg text-blue-600"><Umbrella size={24} /></div>
-                       <div><h3 className="text-lg font-bold text-slate-900">Flood Safety</h3><p className="text-sm text-slate-600">Is this spot elevated?</p></div>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
-                       <div>
-                          <Label className="text-xs font-bold uppercase">Floor Level</Label>
-                          <select className="w-full mt-1 h-10 bg-white border border-blue-200 rounded-lg px-3 text-sm" value={floorLevel} onChange={(e) => setFloorLevel(e.target.value)}>
-                             <option value="-1">Basement</option><option value="0">Ground</option><option value="1">1st Floor</option>
-                          </select>
-                       </div>
-                       {/* SIMPLE MANUAL TOGGLE */}
-                       <label className="flex items-center gap-3 p-2.5 w-full rounded-lg border border-blue-200 bg-white cursor-pointer hover:bg-blue-50">
-                          <input 
-                            type="checkbox" 
-                            checked={isFloodSafe} 
-                            onChange={(e) => setIsFloodSafe(e.target.checked)} 
-                            className="accent-blue-600 w-5 h-5" 
-                          />
-                          <span className="text-sm font-medium text-slate-700">Mark as "Flood Safe"</span>
-                       </label>
-                    </div>
-                 </CardContent>
-              </Card>
-
-              {/* 5. VERIFICATION DOCUMENTS (MANDATORY) */}
+              {/* 5. VERIFICATION DOCUMENTS */}
               <Card className="border-0 shadow-sm bg-white/60">
                 <CardContent className="p-6">
                   <div className="flex items-center justify-between mb-4">
@@ -629,11 +697,9 @@ export default function RegisterSpace() {
                            <span className="text-xs text-slate-500">Earnings Range</span>
                            <span className="text-xl font-bold text-emerald-400">{getPriceDisplay()}<span className="text-sm text-slate-500 font-normal">/hr</span></span>
                         </div>
-                        {isFloodSafe && (
-                           <div className="bg-blue-600/20 text-blue-400 px-2 py-1 rounded text-xs font-bold border border-blue-500/30 flex items-center gap-1">
-                              <Umbrella size={10} /> Safe
-                           </div>
-                        )}
+                        <div className="bg-blue-600/20 text-blue-400 px-2 py-1 rounded text-xs font-bold border border-blue-500/30 flex items-center gap-1">
+                              <Clock size={10} /> {availabilityType === '24/7' ? '24/7' : 'Custom'}
+                        </div>
                      </div>
                   </div>
                </Card>
@@ -650,10 +716,6 @@ export default function RegisterSpace() {
                        <div className="space-y-1">
                          <div className="flex justify-between"><Label className="text-xs">GST Number</Label><span className="text-[10px] text-red-500 font-bold">*Required</span></div>
                          <Input value={gstNumber} onChange={(e) => setGstNumber(e.target.value)} placeholder="GSTIN..." className="bg-white border-red-200 focus:border-red-500" />
-                       </div>
-                       <div className="space-y-1">
-                         <Label className="text-xs">Operational Hours</Label>
-                         <Input value={operationalHours} onChange={(e) => setOperationalHours(e.target.value)} placeholder="e.g. 9 AM - 10 PM" className="bg-white" />
                        </div>
                     </CardContent>
                  </Card>
@@ -690,6 +752,70 @@ export default function RegisterSpace() {
             </div>
 
           </form>
+
+          {/* NEW: ELEVATION VERIFICATION OVERLAY (MODAL) */}
+        <AnimatePresence>
+          {(isVerifyingElevation || elevationData) && (
+            <motion.div 
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/80 backdrop-blur-md p-4"
+            >
+              <Card className="w-full max-w-md overflow-hidden rounded-[32px] shadow-2xl border-0 bg-white">
+                {isVerifyingElevation ? (
+                  <div className="p-12 text-center space-y-6">
+                    <div className="relative w-24 h-24 mx-auto">
+                       <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1.5, ease: "linear" }} className="w-full h-full border-4 border-slate-100 border-t-emerald-600 rounded-full" />
+                       <MapPin className="absolute inset-0 m-auto text-emerald-600 animate-bounce" size={32} />
+                    </div>
+                    <div className="space-y-2">
+                      <h2 className="text-2xl font-black text-slate-900">Verifying Elevation</h2>
+                      <p className="text-slate-500 text-sm">Querying Open-Meteo for geospatial safety data...</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="relative">
+                    <div className={`h-2 ${elevationData?.isSafe ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                    <div className="p-8 text-center space-y-6">
+                      {elevationData?.isSafe ? (
+                        <>
+                          <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto text-emerald-600">
+                            <ShieldCheck size={40} />
+                          </div>
+                          <div className="space-y-2">
+                            <h2 className="text-2xl font-black text-slate-900">Flood Safe Zone!</h2>
+                            <p className="text-slate-500 text-sm font-medium">Elevation: <span className="text-slate-900 font-bold">{elevationData.elevation}m</span> above sea level.</p>
+                            <p className="text-slate-600 leading-relaxed mt-4">
+                              Would you like to list your spot for <span className="font-bold text-emerald-600 italic">Storm Mode</span>? You'll earn higher returns during flood emergencies.
+                            </p>
+                          </div>
+                          <div className="flex gap-3 pt-4">
+                            <Button variant="outline" className="flex-1 h-12 rounded-2xl font-bold" onClick={() => submitFinalData(false)}>No, Regular Only</Button>
+                            <Button className="flex-1 h-12 rounded-2xl bg-emerald-600 hover:bg-emerald-700 font-bold text-white shadow-lg shadow-emerald-200" onClick={() => submitFinalData(true)}>Yes, Storm Ready</Button>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="w-20 h-20 bg-slate-100 rounded-full flex items-center justify-center mx-auto text-slate-400">
+                            <AlertTriangle size={40} />
+                          </div>
+                          <div className="space-y-2">
+                            <h2 className="text-2xl font-black text-slate-900">Standard Zone</h2>
+                            <p className="text-slate-500 text-sm font-medium">Elevation: <span className="text-slate-900 font-bold">{elevationData?.elevation}m</span></p>
+                            <p className="text-slate-600 leading-relaxed mt-4">
+                              This spot is below 10m and not classified as flood-safe. It will be listed for normal hours but hidden during Storm Mode.
+                            </p>
+                          </div>
+                          <Button className="w-full h-12 rounded-2xl bg-slate-900 font-bold text-white mt-4" onClick={() => submitFinalData(false)}>Understood, Publish</Button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </Card>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         </motion.div>
       </main>
     </div>
