@@ -10,11 +10,12 @@ import 'leaflet/dist/leaflet.css';
 import L from 'leaflet'; 
 import { 
   ArrowRight, Loader2, CloudLightning, CloudRain, ShieldCheck,
-  Calendar, Grid3X3, Clock, User, MapPin, ChevronDown, ChevronUp, Bike, Car, Truck, Compass
+  Calendar, Grid3X3, Clock, User, MapPin, ChevronDown, ChevronUp, Bike, Car, Truck, Compass,
+  Moon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-// --- TYPES ---
+// --- TYPES (Updated with Timing) ---
 interface ParkingSpace {
   id: string;
   title: string;
@@ -32,6 +33,10 @@ interface ParkingSpace {
   displayPrice?: number;
   distance?: number;
   direction?: string;
+  // Timing
+  availability_type?: '24/7' | 'custom';
+  available_from?: string;
+  available_to?: string;
 }
 
 interface Booking {
@@ -80,6 +85,23 @@ const getDirection = (lat1: number, lon1: number, lat2: number, lon2: number) =>
   if (brng >= 135 && brng < 225) return 'South';
   if (brng >= 225 && brng < 315) return 'West';
   return '';
+};
+
+// Helper: Check if Space is Open NOW
+const isSpaceOpen = (spot: ParkingSpace) => {
+    if (!spot.availability_type || spot.availability_type === '24/7') return true;
+    if (!spot.available_from || !spot.available_to) return true; // Fallback
+
+    const now = new Date();
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+    const [fromH, fromM] = spot.available_from.split(':').map(Number);
+    const [toH, toM] = spot.available_to.split(':').map(Number);
+    
+    const start = fromH * 60 + fromM;
+    const end = toH * 60 + toM;
+
+    return currentMinutes >= start && currentMinutes < end;
 };
 
 // --- ICON GENERATOR ---
@@ -172,7 +194,6 @@ export default function Browse() {
   const { user } = useAuth();
   
   const [spaces, setSpaces] = useState<ParkingSpace[]>([]);
-  const [myBookings, setMyBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
@@ -190,15 +211,6 @@ export default function Browse() {
       setLoading(true);
       const { data: spaceData } = await supabase.from('parking_spaces').select('*').eq('is_active', true);
       setSpaces(spaceData || []);
-
-      if (user) {
-        const { data: bookData } = await supabase
-          .from('bookings')
-          .select('*, parking_spaces(title, address_street, city)')
-          .eq('driver_id', user.id)
-          .order('start_time', { ascending: false });
-        setMyBookings(bookData || []);
-      }
       setLoading(false);
     };
     fetchData();
@@ -206,13 +218,15 @@ export default function Browse() {
 
   // --- FILTER & SORT LOGIC ---
   const filteredSpots = useMemo(() => {
-    // 1. Filter by Mode (Flood Safe)
-    const list = spaces.filter(s => sosMode ? s.is_flood_safe : true);
+    // 1. Filter by Active Mode (Normal vs Flood)
+    let list = spaces.filter(s => sosMode ? s.is_flood_safe : true);
 
-    // 2. Calculate Distance & Direction for ALL spots
+    // 2. Filter by Timing (Hide Closed Spots)
+    list = list.filter(s => isSpaceOpen(s));
+
+    // 3. Calculate Distance & Direction
     const listWithMetrics = list.map(s => {
       const dist = calculateDistance(mapCenter[0], mapCenter[1], s.latitude, s.longitude);
-      // Only calculate direction if search is active (distance < 50km to be relevant), else empty
       const dir = (showResults && dist < 50) ? getDirection(mapCenter[0], mapCenter[1], s.latitude, s.longitude) : '';
       return {
         ...s,
@@ -222,19 +236,17 @@ export default function Browse() {
       };
     });
 
-    // 3. CASE: NO SEARCH (Show All)
+    // 4. NO SEARCH: Sort by Distance only
     if (!showResults && !selectedSpot) {
-      return listWithMetrics.sort((a, b) => (a.distance || 0) - (b.distance || 0)); // Just sort by distance from current center
+      return listWithMetrics.sort((a, b) => (a.distance || 0) - (b.distance || 0));
     }
 
-    // 4. CASE: SEARCH ACTIVE (Filter, Distribute Directions, Limit to 10)
-    
-    // Bucket Sort (North, West, East, South/Others)
+    // 5. SEARCH ACTIVE: Bucket Sort (North, East, West priority)
     const north = listWithMetrics.filter(s => s.direction === 'North').sort((a, b) => a.distance! - b.distance!);
     const east = listWithMetrics.filter(s => s.direction === 'East').sort((a, b) => a.distance! - b.distance!);
     const west = listWithMetrics.filter(s => s.direction === 'West').sort((a, b) => a.distance! - b.distance!);
     
-    // Pick top 2 from N, E, W first
+    // Pick top 2 from N, E, W
     const combined: ParkingSpace[] = [];
     for(let i=0; i<2; i++) {
         if(north[i]) combined.push(north[i]);
@@ -242,7 +254,7 @@ export default function Browse() {
         if(east[i]) combined.push(east[i]);
     }
 
-    // Fill remaining spots with closest from ANY direction
+    // Fill remaining
     const existingIds = new Set(combined.map(s => s.id));
     const remainders = listWithMetrics
         .filter(s => !existingIds.has(s.id))
@@ -250,7 +262,7 @@ export default function Browse() {
 
     const result = [...combined, ...remainders].slice(0, 10); // LIMIT TO 10
 
-    // Final Sort: Selected spot first, then distance
+    // Final Sort: Selected first
     return result.sort((a, b) => {
         if (a.id === selectedSpot) return -1;
         if (b.id === selectedSpot) return 1;
@@ -388,13 +400,27 @@ export default function Browse() {
                         <h4 className="font-bold truncate text-base">{spot.title}</h4>
                         <p className={`font-black ${sosMode ? 'text-blue-400' : 'text-emerald-700'}`}>₹{spot.displayPrice}</p>
                       </div>
-                      <p className="text-xs opacity-60 truncate mt-1 flex items-center gap-2">
-                        <span>{spot.address}</span>
-                        {spot.direction && <span className="flex items-center gap-1 bg-slate-100 px-1.5 py-0.5 rounded font-bold text-[9px]"><Compass size={10} /> {spot.direction}</span>}
-                      </p>
+                      
+                      <div className="flex items-center gap-2 mt-1">
+                        {/* ADDRESS */}
+                        <p className="text-xs opacity-60 truncate flex-1">{spot.address}</p>
+                        
+                        {/* TIMING BADGE */}
+                        {spot.availability_type === 'custom' ? (
+                            <span className="flex items-center gap-1 bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded font-bold text-[9px] border border-amber-100 whitespace-nowrap">
+                                <Clock size={10} /> Closes {spot.available_to?.slice(0,5)}
+                            </span>
+                        ) : (
+                            <span className="flex items-center gap-1 bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded font-bold text-[9px] border border-blue-100 whitespace-nowrap">
+                                <Clock size={10} /> 24/7
+                            </span>
+                        )}
+                      </div>
+
                       <div className="flex gap-2 mt-3 items-center">
                         {spot.price_bike && <span className="flex items-center gap-1 text-[10px] font-bold bg-slate-100 px-2 py-1 rounded-md text-slate-600"><Bike size={10}/> ₹{spot.price_bike}</span>}
                         {spot.price_car && <span className="flex items-center gap-1 text-[10px] font-bold bg-emerald-50 px-2 py-1 rounded-md text-emerald-700 border border-emerald-100"><Car size={10}/> ₹{spot.price_car}</span>}
+                        {spot.direction && <span className="flex items-center gap-1 bg-slate-100 px-1.5 py-0.5 rounded font-bold text-[9px] ml-auto"><Compass size={10} /> {spot.direction}</span>}
                       </div>
                     </div>
                   </div>

@@ -21,7 +21,9 @@ import {
   ToggleRight,
   Loader2,
   Zap,
-  ShieldCheck
+  ShieldCheck,
+  Clock, // Added
+  Moon // Added
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -31,7 +33,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { motion, AnimatePresence } from 'framer-motion';
 
-// --- TYPES ---
+// --- TYPES (Updated to include Timing) ---
 interface Space {
   id: string;
   title: string;
@@ -43,6 +45,10 @@ interface Space {
   earnings: number;
   isActive: boolean;
   type: 'private' | 'commercial';
+  // New Timing Fields
+  availabilityType: '24/7' | 'custom';
+  availableFrom: string | null;
+  availableTo: string | null;
 }
 
 export default function ProviderDashboard() {
@@ -87,7 +93,11 @@ export default function ProviderDashboard() {
             rating: 5.0, 
             reviews: 0,
             totalBookings: validBookings.length,
-            earnings
+            earnings,
+            // Map Timing Fields
+            availabilityType: s.availability_type || '24/7',
+            availableFrom: s.available_from,
+            availableTo: s.available_to
           };
         });
 
@@ -285,7 +295,50 @@ function StatsCard({ icon: Icon, label, value, color, delay }: any) {
   );
 }
 
+// --- TIMING HELPER FUNCTION ---
+const getStatusDisplay = (space: Space) => {
+  // 1. Manually Inactive
+  if (!space.isActive) {
+    return {
+      color: "bg-slate-200 text-slate-500",
+      icon: <ToggleLeft size={12} />,
+      label: "Offline"
+    };
+  }
+
+  // 2. Custom Timing Check
+  if (space.availabilityType === 'custom' && space.availableFrom && space.availableTo) {
+    const now = new Date();
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+    const [fromH, fromM] = space.availableFrom.split(':').map(Number);
+    const [toH, toM] = space.availableTo.split(':').map(Number);
+    
+    const startMinutes = fromH * 60 + fromM;
+    const endMinutes = toH * 60 + toM;
+
+    const isOpen = currentMinutes >= startMinutes && currentMinutes < endMinutes;
+
+    if (!isOpen) {
+      return {
+        color: "bg-amber-100 text-amber-700",
+        icon: <Moon size={12} className="fill-amber-700" />,
+        label: "Closed Now"
+      };
+    }
+  }
+
+  // 3. Active & Open
+  return {
+    color: "bg-emerald-100 text-emerald-700",
+    icon: <Zap size={12} className="fill-emerald-700" />,
+    label: "Live"
+  };
+};
+
 function SpaceItem({ space, index, navigate, onToggle, onDelete }: any) {
+  const status = getStatusDisplay(space);
+
   return (
     <motion.div 
       layout 
@@ -314,15 +367,11 @@ function SpaceItem({ space, index, navigate, onToggle, onDelete }: any) {
               <h3 className="text-xl font-bold text-slate-900 truncate group-hover:text-emerald-700 transition-colors">
                 {space.title}
               </h3>
-              {space.isActive ? (
-                <span className="flex items-center gap-1 text-[10px] px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700 font-bold uppercase tracking-wider">
-                  <Zap size={12} className="fill-emerald-700" /> Active
-                </span>
-              ) : (
-                <span className="text-[10px] px-2.5 py-1 rounded-full bg-slate-200 text-slate-500 font-bold uppercase tracking-wider">
-                  Offline
-                </span>
-              )}
+              
+              {/* Dynamic Status Badge */}
+              <span className={`flex items-center gap-1 text-[10px] px-2.5 py-1 rounded-full font-bold uppercase tracking-wider ${status.color}`}>
+                {status.icon} {status.label}
+              </span>
             </div>
             
             <div className="flex items-center gap-2 text-base text-slate-500">
@@ -334,13 +383,23 @@ function SpaceItem({ space, index, navigate, onToggle, onDelete }: any) {
                <div className="flex items-center gap-1 text-xs font-semibold bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-100 text-slate-600">
                   <ShieldCheck size={14} className="text-blue-500" /> {space.type}
                </div>
+               
+               {/* NEW: Timing Badge */}
+               <div className="flex items-center gap-1 text-xs font-semibold bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-100 text-slate-600">
+                  <Clock size={14} className="text-indigo-500" />
+                  {space.availabilityType === '24/7' 
+                    ? '24/7 Access' 
+                    : `${space.availableFrom?.slice(0,5)} - ${space.availableTo?.slice(0,5)}`
+                  }
+               </div>
+
                <div className="flex items-center gap-1 text-xs font-semibold text-amber-600">
                   <Star size={14} className="fill-amber-500" /> {space.rating}
                </div>
             </div>
           </div>
 
-          {/* Metrics Block - Font Sizes Increased Here */}
+          {/* Metrics Block */}
           <div className="flex items-center divide-x divide-slate-100 bg-slate-50/50 rounded-xl border border-slate-100 p-4 md:p-0 md:border-0 md:bg-transparent">
              <div className="px-6 text-center md:text-left">
                 <p className="text-xs uppercase font-bold text-slate-500 tracking-wider mb-1">Rate</p>

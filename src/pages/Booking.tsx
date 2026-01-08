@@ -10,7 +10,8 @@ import { supabase } from '@/lib/supabase';
 import { toast } from '@/hooks/use-toast';
 import { 
   ArrowLeft, MapPin, Star, Clock, Car, Bike, Truck, Calendar, Check, 
-  LogOut, Shield, Umbrella, Video, UserCheck, Loader2, IndianRupee, Navigation as NavIcon 
+  LogOut, Shield, Umbrella, Video, UserCheck, Loader2, Navigation as NavIcon,
+  AlertCircle
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 
@@ -21,7 +22,6 @@ interface Spot {
   title: string;
   address_street: string;
   city: string;
-  // Prices can be null if that vehicle type isn't supported
   price_car: number | null;
   price_bike: number | null;
   price_suv: number | null;
@@ -32,6 +32,11 @@ interface Spot {
   has_guard: boolean;
   is_flood_safe: boolean;
   owner_id: string;
+  space_type: 'private' | 'commercial';
+  // NEW: Timing Fields
+  availability_type: '24/7' | 'custom';
+  available_from: string | null;
+  available_to: string | null;
 }
 
 type VehicleType = 'car' | 'bike' | 'suv';
@@ -87,7 +92,7 @@ export default function Booking() {
     navigate('/auth?mode=login');
   };
 
-  // Dynamic Price Calculation based on selection
+  // Dynamic Price Calculation
   const getHourlyRate = () => {
     if (!spot) return 0;
     if (vehicleType === 'car') return spot.price_car || 0;
@@ -99,6 +104,7 @@ export default function Booking() {
   const hourlyRate = getHourlyRate();
   const totalPrice = hourlyRate * parseInt(duration || '0');
 
+  // --- SUBMIT HANDLER WITH TIME VALIDATION ---
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !spot) return;
@@ -106,6 +112,34 @@ export default function Booking() {
     if (!date || !startTime || !duration) {
       toast({ title: "Missing Info", description: "Please fill in all booking details.", variant: "destructive" });
       return;
+    }
+
+    // 1. VALIDATE TIMING (New Logic)
+    if (spot.availability_type === 'custom' && spot.available_from && spot.available_to) {
+        const bookingStart = new Date(`${date}T${startTime}`);
+        const bookingEnd = new Date(bookingStart.getTime() + parseInt(duration) * 60 * 60 * 1000);
+
+        // Parse Spot Hours
+        const [openH, openM] = spot.available_from.split(':').map(Number);
+        const [closeH, closeM] = spot.available_to.split(':').map(Number);
+
+        // Set Spot Open/Close times for that specific date
+        const openTime = new Date(bookingStart);
+        openTime.setHours(openH, openM, 0);
+
+        const closeTime = new Date(bookingStart);
+        closeTime.setHours(closeH, closeM, 0);
+
+        // Check if Booking is within bounds
+        // Note: This simple logic assumes operation within the same day. 
+        if (bookingStart < openTime || bookingEnd > closeTime) {
+            toast({ 
+                title: "Spot Closed", 
+                description: `This spot is only open from ${spot.available_from.slice(0,5)} to ${spot.available_to.slice(0,5)}.`, 
+                variant: "destructive" 
+            });
+            return;
+        }
     }
 
     setIsBooking(true);
@@ -119,8 +153,8 @@ export default function Booking() {
         driver_id: user.id,
         start_time: startDateTime.toISOString(),
         end_time: endDateTime.toISOString(),
-        total_price: totalPrice,
-        vehicle_type: vehicleType, // Saving the selected vehicle type
+        total_price: totalPrice + 10, // Including platform fee in total
+        vehicle_type: vehicleType,
         status: 'confirmed'
       };
 
@@ -180,7 +214,7 @@ export default function Booking() {
                 </div>
                 <div className="flex justify-between items-center pt-2 border-t border-slate-200 mt-2">
                   <span className="text-sm font-bold text-slate-700">Total Paid</span>
-                  <span className="text-lg font-bold text-emerald-600">₹{totalPrice}</span>
+                  <span className="text-lg font-bold text-emerald-600">₹{totalPrice + 10}</span>
                 </div>
               </div>
 
@@ -232,15 +266,39 @@ export default function Booking() {
               <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-xl overflow-hidden rounded-3xl h-full">
                 <div className="h-64 w-full bg-slate-200 relative">
                   <img src={spotImage} alt={spot.title} className="w-full h-full object-cover" />
-                  <div className="absolute top-4 right-4 bg-white/90 backdrop-blur-md px-3 py-1 rounded-full text-xs font-bold shadow-sm uppercase tracking-wider text-slate-700">Commercial</div>
+                  <div className="absolute top-4 right-4 bg-white/90 backdrop-blur-md px-3 py-1 rounded-full text-xs font-bold shadow-sm uppercase tracking-wider text-slate-700">
+                    {spot.space_type}
+                  </div>
                 </div>
                 <CardContent className="p-8">
                   <h1 className="text-3xl font-bold text-slate-900 mb-2">{spot.title}</h1>
                   <div className="flex items-center gap-2 text-slate-500 mb-6"><MapPin size={18} /><span>{spot.address_street}, {spot.city}</span></div>
-                  <div className="flex gap-4 mb-8">
-                    <div className="flex items-center gap-1.5 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-100 text-amber-700 font-bold text-sm"><Star size={16} className="fill-amber-500 text-amber-500" />5.0</div>
-                    {spot.is_flood_safe && <div className="flex items-center gap-1.5 bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-100 text-blue-600 font-bold text-sm"><Umbrella size={16} />Flood Safe</div>}
+                  
+                  {/* BADGES ROW */}
+                  <div className="flex flex-wrap gap-3 mb-8">
+                    <div className="flex items-center gap-1.5 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-100 text-amber-700 font-bold text-xs">
+                        <Star size={14} className="fill-amber-500 text-amber-500" /> 5.0
+                    </div>
+                    {spot.is_flood_safe ? (
+                        <div className="flex items-center gap-1.5 bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-100 text-blue-600 font-bold text-xs">
+                            <Umbrella size={14} /> Flood Safe
+                        </div>
+                    ) : (
+                        <div className="flex items-center gap-1.5 bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-200 text-slate-500 font-bold text-xs">
+                            <AlertCircle size={14} /> Normal Zone
+                        </div>
+                    )}
+                    
+                    {/* TIMING BADGE */}
+                    <div className="flex items-center gap-1.5 bg-indigo-50 px-3 py-1.5 rounded-lg border border-indigo-100 text-indigo-600 font-bold text-xs">
+                        <Clock size={14} /> 
+                        {spot.availability_type === '24/7' 
+                            ? 'Open 24/7' 
+                            : `${spot.available_from?.slice(0,5)} - ${spot.available_to?.slice(0,5)}`
+                        }
+                    </div>
                   </div>
+
                   <div className="space-y-4 mb-8">
                     <h3 className="font-bold text-slate-900">Amenities</h3>
                     <div className="grid grid-cols-2 gap-3">
