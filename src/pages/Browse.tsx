@@ -10,46 +10,30 @@ import 'leaflet/dist/leaflet.css';
 import L from 'leaflet'; 
 import { 
   ArrowRight, Loader2, CloudLightning, CloudRain, ShieldCheck,
-  Calendar, Grid3X3, Clock, User, MapPin, ChevronDown, ChevronUp, Bike, Car, Truck, Compass,
-  Moon
+  Grid3X3, Clock, User, MapPin, ChevronDown, ChevronUp, Bike, Car, Truck, Target
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-// --- TYPES (Updated with Timing) ---
+// --- TYPES ---
 interface ParkingSpace {
   id: string;
   title: string;
-  address: string;
+  address_street: string; 
+  city: string;
   price_car: number;
   price_bike: number;
   price_suv: number;
   latitude: number;
   longitude: number;
-  is_flood_safe: boolean;
+  is_flood_safe: boolean; 
   images: string[];
   space_type: string;
   is_active: boolean;
-  city?: string;
-  displayPrice?: number;
-  distance?: number;
-  direction?: string;
-  // Timing
   availability_type?: '24/7' | 'custom';
   available_from?: string;
   available_to?: string;
-}
-
-interface Booking {
-  id: string;
-  driver_id: string;
-  space_id: string;
-  start_time: string;
-  status?: string;
-  parking_spaces: {
-    title: string;
-    address: string;
-    city: string;
-  };
+  distance?: number;
+  displayPrice?: number;
 }
 
 // --- CONFIGURATION ---
@@ -59,7 +43,6 @@ const LIGHT_MAP = `https://api.tomtom.com/map/1/tile/basic/main/{z}/{x}/{y}.png?
 
 // --- UTILS ---
 const toRad = (val: number) => (val * Math.PI) / 180;
-const toDeg = (val: number) => (val * 180) / Math.PI;
 
 const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
   if (!lat1 || !lon1 || !lat2 || !lon2) return 9999; 
@@ -73,79 +56,56 @@ const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: numbe
   return R * c;
 };
 
-const getDirection = (lat1: number, lon1: number, lat2: number, lon2: number) => {
-  const y = Math.sin(toRad(lon2 - lon1)) * Math.cos(toRad(lat2));
-  const x = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) -
-            Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(toRad(lon2 - lon1));
-  let brng = toDeg(Math.atan2(y, x));
-  if (brng < 0) brng += 360; 
-
-  if (brng >= 315 || brng < 45) return 'North';
-  if (brng >= 45 && brng < 135) return 'East';
-  if (brng >= 135 && brng < 225) return 'South';
-  if (brng >= 225 && brng < 315) return 'West';
-  return '';
-};
-
-// Helper: Check if Space is Open NOW
 const isSpaceOpen = (spot: ParkingSpace) => {
     if (!spot.availability_type || spot.availability_type === '24/7') return true;
-    if (!spot.available_from || !spot.available_to) return true; // Fallback
-
+    if (!spot.available_from || !spot.available_to) return true; 
     const now = new Date();
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
-
     const [fromH, fromM] = spot.available_from.split(':').map(Number);
     const [toH, toM] = spot.available_to.split(':').map(Number);
-    
     const start = fromH * 60 + fromM;
     const end = toH * 60 + toM;
-
     return currentMinutes >= start && currentMinutes < end;
 };
 
-// --- ICON GENERATOR ---
+// --- ICONS ---
 const createParkingIcon = (spot: ParkingSpace, isSelected: boolean, isSafeMode: boolean) => {
-  const price = spot.displayPrice || spot.price_car || 0;
   const bgColor = isSafeMode ? '#3b82f6' : (isSelected ? '#10b981' : '#1e293b');
-  
   const html = `
     <div class="pin-wrapper">
       <div class="pin-icon" style="background-color: ${bgColor};">
         <span class="icon-char">P</span>
       </div>
       <div class="pin-pulse" style="border-color: ${bgColor};"></div>
-
       <div class="pin-tooltip">
         <div class="tooltip-header">
           <strong>${spot.title}</strong>
-          <span class="tooltip-dist">${spot.direction ? spot.direction + ' • ' : ''}${spot.distance?.toFixed(1)} km</span>
+          ${spot.distance ? `<span class="tooltip-dist">${spot.distance.toFixed(1)} km</span>` : ''}
         </div>
         <div class="tooltip-prices">
-          <div class="price-item">
-            <span class="icon">🏍️</span> <span class="val">₹${spot.price_bike || '--'}</span>
-          </div>
-          <div class="price-item active">
-            <span class="icon">🚗</span> <span class="val">₹${spot.price_car || '--'}</span>
-          </div>
-          <div class="price-item">
-            <span class="icon">🚙</span> <span class="val">₹${spot.price_suv || '--'}</span>
-          </div>
+          <div class="price-item"><span class="icon">🏍️</span> <span class="val">₹${spot.price_bike || '--'}</span></div>
+          <div class="price-item active"><span class="icon">🚗</span> <span class="val">₹${spot.price_car || '--'}</span></div>
         </div>
         <div class="tooltip-arrow"></div>
       </div>
     </div>
   `;
-
-  return L.divIcon({
-    className: 'custom-leaflet-icon',
-    html: html,
-    iconSize: [40, 40],
-    iconAnchor: [20, 20],
-  });
+  return L.divIcon({ className: 'custom-leaflet-icon', html: html, iconSize: [40, 40], iconAnchor: [20, 20] });
 };
 
-// --- CSS ---
+const createDestinationIcon = () => {
+  const html = `
+    <div class="pin-wrapper destination-pin">
+      <div class="pin-icon" style="background-color: #ef4444; box-shadow: 0 0 20px rgba(239, 68, 68, 0.6);">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="2"/></svg>
+      </div>
+      <div class="pin-pulse" style="border-color: #ef4444; animation-duration: 1.5s;"></div>
+      <div class="dest-tooltip">Destination</div>
+    </div>
+  `;
+  return L.divIcon({ className: 'custom-leaflet-icon', html: html, iconSize: [40, 40], iconAnchor: [20, 20] });
+};
+
 const mapStyles = `
   .custom-leaflet-icon { background: transparent; border: none; }
   .pin-wrapper { position: relative; display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; }
@@ -155,7 +115,7 @@ const mapStyles = `
   .icon-char { font-family: 'Inter', sans-serif; font-weight: 900; font-size: 16px; }
   .pin-pulse { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 32px; height: 32px; border-radius: 50%; border: 2px solid; opacity: 0; z-index: 1; animation: pulse-ring 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite; }
   @keyframes pulse-ring { 0% { transform: translate(-50%, -50%) scale(0.8); opacity: 0.8; } 100% { transform: translate(-50%, -50%) scale(2.5); opacity: 0; } }
-  .pin-tooltip { position: absolute; bottom: 45px; left: 50%; transform: translateX(-50%) scale(0.8); background: white; color: #0f172a; padding: 12px; border-radius: 12px; width: 180px; box-shadow: 0 10px 30px -5px rgba(0,0,0,0.3); opacity: 0; visibility: hidden; pointer-events: none; transition: all 0.2s ease; border: 1px solid #e2e8f0; z-index: 10; }
+  .pin-tooltip { position: absolute; bottom: 45px; left: 50%; transform: translateX(-50%) scale(0.8); background: white; color: #0f172a; padding: 12px; border-radius: 12px; width: 150px; box-shadow: 0 10px 30px -5px rgba(0,0,0,0.3); opacity: 0; visibility: hidden; pointer-events: none; transition: all 0.2s ease; border: 1px solid #e2e8f0; z-index: 10; }
   .pin-wrapper:hover .pin-tooltip { opacity: 1; visibility: visible; transform: translateX(-50%) scale(1); bottom: 50px; }
   .tooltip-arrow { position: absolute; bottom: -6px; left: 50%; margin-left: -6px; width: 12px; height: 12px; background: white; transform: rotate(45deg); border-bottom: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; }
   .tooltip-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid #f1f5f9; }
@@ -166,6 +126,8 @@ const mapStyles = `
   .price-item.active { background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }
   .price-item .icon { font-size: 10px; margin-bottom: 2px; }
   .price-item .val { font-size: 10px; font-weight: 800; }
+  .dest-tooltip { position: absolute; top: -30px; left: 50%; transform: translateX(-50%); background: #ef4444; color: white; padding: 4px 8px; border-radius: 6px; font-size: 10px; font-weight: 700; white-space: nowrap; opacity: 0; transition: opacity 0.2s; pointer-events: none; }
+  .destination-pin:hover .dest-tooltip { opacity: 1; }
 `;
 
 function MapUpdater({ center }: { center: [number, number] }) {
@@ -202,7 +164,10 @@ export default function Browse() {
   const [selectedSpot, setSelectedSpot] = useState<string | null>(null);
   const [sosMode, setSosMode] = useState(false);
   const [showStormIntro, setShowStormIntro] = useState(false);
+  
+  // MAP STATE
   const [mapCenter, setMapCenter] = useState<[number, number]>([13.0827, 80.2707]);
+  const [destination, setDestination] = useState<{ lat: number; lon: number; name: string } | null>(null);
 
   const userAvatar = user?.user_metadata?.avatar_url || (user as any)?.avatar_url;
 
@@ -216,61 +181,38 @@ export default function Browse() {
     fetchData();
   }, [user]);
 
-  // --- FILTER & SORT LOGIC ---
-  const filteredSpots = useMemo(() => {
-    // 1. Filter by Active Mode (Normal vs Flood)
-    let list = spaces.filter(s => sosMode ? s.is_flood_safe : true);
-
-    // 2. Filter by Timing (Hide Closed Spots)
-    list = list.filter(s => isSpaceOpen(s));
-
-    // 3. Calculate Distance & Direction
-    const listWithMetrics = list.map(s => {
-      const dist = calculateDistance(mapCenter[0], mapCenter[1], s.latitude, s.longitude);
-      const dir = (showResults && dist < 50) ? getDirection(mapCenter[0], mapCenter[1], s.latitude, s.longitude) : '';
-      return {
+  // --- LOGIC 1: ALL VISIBLE SPOTS (FOR INITIAL MAP) ---
+  const allVisibleSpots = useMemo(() => {
+    return spaces.filter(s => {
+        if (sosMode && !s.is_flood_safe) return false; // Strict Storm Mode
+        if (!isSpaceOpen(s)) return false; // Strict Timing
+        return true;
+    }).map(s => ({
         ...s,
         displayPrice: sosMode ? Math.round((s.price_car || 0) * 1.5) : (s.price_car || 0),
-        distance: dist,
-        direction: dir
-      };
-    });
+        distance: calculateDistance(mapCenter[0], mapCenter[1], s.latitude, s.longitude)
+    }));
+  }, [spaces, sosMode, mapCenter]);
 
-    // 4. NO SEARCH: Sort by Distance only
-    if (!showResults && !selectedSpot) {
-      return listWithMetrics.sort((a, b) => (a.distance || 0) - (b.distance || 0));
+  // --- LOGIC 2: NEAREST SPOTS (FOR LIST & SEARCHED MAP) ---
+  const nearestSpots = useMemo(() => {
+    const sorted = [...allVisibleSpots].sort((a, b) => (a.distance || 0) - (b.distance || 0));
+    const limited = sorted.slice(0, 10);
+
+    if (selectedSpot) {
+       const selected = limited.find(s => s.id === selectedSpot);
+       if (selected) return [selected, ...limited.filter(s => s.id !== selectedSpot)];
+       const hiddenSelected = allVisibleSpots.find(s => s.id === selectedSpot);
+       if (hiddenSelected) return [hiddenSelected, ...limited.slice(0, 9)];
     }
+    return limited;
+  }, [allVisibleSpots, selectedSpot]);
 
-    // 5. SEARCH ACTIVE: Bucket Sort (North, East, West priority)
-    const north = listWithMetrics.filter(s => s.direction === 'North').sort((a, b) => a.distance! - b.distance!);
-    const east = listWithMetrics.filter(s => s.direction === 'East').sort((a, b) => a.distance! - b.distance!);
-    const west = listWithMetrics.filter(s => s.direction === 'West').sort((a, b) => a.distance! - b.distance!);
-    
-    // Pick top 2 from N, E, W
-    const combined: ParkingSpace[] = [];
-    for(let i=0; i<2; i++) {
-        if(north[i]) combined.push(north[i]);
-        if(west[i]) combined.push(west[i]);
-        if(east[i]) combined.push(east[i]);
-    }
+  // --- LOGIC 3: WHICH SPOTS TO SHOW ON MAP? ---
+  // If search results are open, show ONLY nearest. Otherwise, show ALL.
+  const mapSpots = showResults ? nearestSpots : allVisibleSpots;
 
-    // Fill remaining
-    const existingIds = new Set(combined.map(s => s.id));
-    const remainders = listWithMetrics
-        .filter(s => !existingIds.has(s.id))
-        .sort((a, b) => a.distance! - b.distance!);
-
-    const result = [...combined, ...remainders].slice(0, 10); // LIMIT TO 10
-
-    // Final Sort: Selected first
-    return result.sort((a, b) => {
-        if (a.id === selectedSpot) return -1;
-        if (b.id === selectedSpot) return 1;
-        return (a.distance || 0) - (b.distance || 0);
-    });
-
-  }, [spaces, sosMode, selectedSpot, mapCenter, showResults]);
-
+  // --- SEARCH HANDLER ---
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!searchQuery.trim()) return;
@@ -280,8 +222,12 @@ export default function Browse() {
       const data = await response.json();
       if (data.results?.length > 0) {
         const { lat, lon } = data.results[0].position;
-        setMapCenter([lat, lon]);
-        setShowResults(true); // Triggers the filtering logic
+        const address = data.results[0].address.freeformAddress;
+        
+        setMapCenter([lat, lon]); 
+        setDestination({ lat, lon, name: address }); 
+        
+        setShowResults(true); 
         setIsResultsCollapsed(true);
         setSelectedSpot(null);
       }
@@ -299,7 +245,16 @@ export default function Browse() {
         <MapContainer center={mapCenter} zoom={13} zoomControl={false} style={{ height: '100%', width: '100%' }}>
           <TileLayer url={sosMode ? DARK_MAP : LIGHT_MAP} attribution='&copy; TomTom' />
           <MapUpdater center={mapCenter} />
-          {filteredSpots.map((spot) => (
+          
+          {destination && (
+            <Marker 
+              position={[destination.lat, destination.lon]} 
+              icon={createDestinationIcon()} 
+            />
+          )}
+
+          {/* DYNAMIC MAP PINS: Switches between ALL and NEAREST based on search state */}
+          {mapSpots.map((spot) => (
             <Marker 
               key={spot.id} 
               position={[spot.latitude || 0, spot.longitude || 0]}
@@ -307,8 +262,8 @@ export default function Browse() {
               eventHandlers={{ 
                 click: () => { 
                   setSelectedSpot(spot.id); 
-                  if (!showResults) setShowResults(true); // Open sheet if closed
-                  setIsResultsCollapsed(false); // Expand list to show details
+                  if (!showResults) setShowResults(true);
+                  setIsResultsCollapsed(false); 
                   setMapCenter([spot.latitude, spot.longitude]); 
                 }
               }}
@@ -369,21 +324,25 @@ export default function Browse() {
                   <div>
                     <h2 className="text-xl font-black flex items-center gap-2">
                       {sosMode ? <ShieldCheck className="text-blue-500" /> : <Grid3X3 size={20} />}
-                      {sosMode ? 'Flood-Safe Zones' : 'Nearest Parking'}
+                      {destination ? (
+                          <span className="truncate max-w-[200px]">Near {destination.name.split(',')[0]}</span>
+                      ) : (
+                          <span>{sosMode ? 'Flood-Safe Zones' : 'Nearest Parking'}</span>
+                      )}
                     </h2>
-                    <p className="text-xs opacity-60 font-medium ml-1">{filteredSpots.length} spots found near destination</p>
+                    <p className="text-xs opacity-60 font-medium ml-1">Showing {nearestSpots.length} closest spots</p>
                   </div>
                   <div className="flex gap-2">
                     <Button variant="ghost" size="icon" className="rounded-full hover:bg-slate-100" onClick={(e) => { e.stopPropagation(); toggleCollapse(); }}>
                       {isResultsCollapsed ? <ChevronUp /> : <ChevronDown />}
                     </Button>
-                    <Button variant="ghost" className="rounded-full text-xs font-bold" onClick={(e) => { e.stopPropagation(); setShowResults(false); }}>Close</Button>
+                    <Button variant="ghost" className="rounded-full text-xs font-bold" onClick={(e) => { e.stopPropagation(); setShowResults(false); setDestination(null); }}>Close</Button>
                   </div>
                 </div>
               </div>
 
               <div className="flex-1 overflow-y-auto p-6 pt-2 pb-10 space-y-4">
-                {filteredSpots.length === 0 ? <p className="text-center opacity-50 py-10">No spots found.</p> : filteredSpots.map(spot => (
+                {nearestSpots.length === 0 ? <p className="text-center opacity-50 py-10">No spots found nearby.</p> : nearestSpots.map(spot => (
                   <div 
                     key={spot.id} 
                     onClick={() => navigate(`/booking/${spot.id}`)}
@@ -402,10 +361,7 @@ export default function Browse() {
                       </div>
                       
                       <div className="flex items-center gap-2 mt-1">
-                        {/* ADDRESS */}
-                        <p className="text-xs opacity-60 truncate flex-1">{spot.address}</p>
-                        
-                        {/* TIMING BADGE */}
+                        <p className="text-xs opacity-60 truncate flex-1">{spot.address_street || spot.city}</p>
                         {spot.availability_type === 'custom' ? (
                             <span className="flex items-center gap-1 bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded font-bold text-[9px] border border-amber-100 whitespace-nowrap">
                                 <Clock size={10} /> Closes {spot.available_to?.slice(0,5)}
@@ -420,7 +376,6 @@ export default function Browse() {
                       <div className="flex gap-2 mt-3 items-center">
                         {spot.price_bike && <span className="flex items-center gap-1 text-[10px] font-bold bg-slate-100 px-2 py-1 rounded-md text-slate-600"><Bike size={10}/> ₹{spot.price_bike}</span>}
                         {spot.price_car && <span className="flex items-center gap-1 text-[10px] font-bold bg-emerald-50 px-2 py-1 rounded-md text-emerald-700 border border-emerald-100"><Car size={10}/> ₹{spot.price_car}</span>}
-                        {spot.direction && <span className="flex items-center gap-1 bg-slate-100 px-1.5 py-0.5 rounded font-bold text-[9px] ml-auto"><Compass size={10} /> {spot.direction}</span>}
                       </div>
                     </div>
                   </div>
