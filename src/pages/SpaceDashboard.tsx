@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Input } from '@/components/ui/input'; // Added for Block Logic
 import { Logo } from '@/components/Logo';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
@@ -10,13 +11,15 @@ import {
   ArrowLeft, Clock, Car, Bike, Truck, 
   Users, MessageSquare, BarChart3, Wallet, 
   Maximize2, Download, X, QrCode,
-  Zap, CloudRain, ShieldAlert, Activity, LayoutDashboard, Info, BrainCircuit, Cloud, Sun, CloudLightning, RotateCcw
+  Zap, CloudRain, ShieldAlert, Activity, LayoutDashboard, Info, BrainCircuit, Cloud, Sun, CloudLightning, RotateCcw,
+  Lock // Added Lock Icon
 } from 'lucide-react';
 import { format, isSameDay, getHours, areIntervalsOverlapping, addDays } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
 import QRCode from "react-qr-code";
 import { ChatSheet } from '@/components/ChatSheet';
 import { cn } from '@/lib/utils';
+import { toast } from '@/hooks/use-toast'; // Added Toast
 
 // --- IMPORT TENSORFLOW MODEL ---
 import { trainModel, predictPrice } from '@/lib/mlmodel';
@@ -56,8 +59,8 @@ export default function SpaceDashboard() {
   
   // --- TIME MACHINE STATE ---
   const [forecast, setForecast] = useState<any>(null);
-  const [selectedDayOffset, setSelectedDayOffset] = useState(0); // 0=Today, 1=Tmr, 2=DayAfter
-  const [selectedHour, setSelectedHour] = useState(new Date().getHours()); // 0 to 23
+  const [selectedDayOffset, setSelectedDayOffset] = useState(0); 
+  const [selectedHour, setSelectedHour] = useState(new Date().getHours()); 
   
   // Computed Target Date
   const targetDate = useMemo(() => {
@@ -70,7 +73,7 @@ export default function SpaceDashboard() {
   const [viewMode, setViewMode] = useState<'ops' | 'pricing'>('ops');
   const [showQRModal, setShowQRModal] = useState(false);
 
-  // Environment State (Specific to Selected Time)
+  // Environment State
   const [currentWeather, setCurrentWeather] = useState({ rainMM: 0, temp: 0, code: 0 });
   const [manualFloodMode, setManualFloodMode] = useState(false);
   const [isAutoFlood, setIsAutoFlood] = useState(false);
@@ -80,11 +83,15 @@ export default function SpaceDashboard() {
   const [trainingLog, setTrainingLog] = useState("Initializing Neural Network...");
   const [prediction, setPrediction] = useState(1.0);
 
+  // --- BLOCKED SLOTS STATE ---
+  const [blockedSlots, setBlockedSlots] = useState({ car: 0, bike: 0, suv: 0 });
+  const [isUpdatingSlots, setIsUpdatingSlots] = useState(false);
+
   // Occupancy State
   const [occupancy, setOccupancy] = useState({
-    car: { total: 0, parked: 0, booked: 0 },
-    bike: { total: 0, parked: 0, booked: 0 },
-    suv: { total: 0, parked: 0, booked: 0 },
+    car: { total: 0, parked: 0, booked: 0, blocked: 0 },
+    bike: { total: 0, parked: 0, booked: 0, blocked: 0 },
+    suv: { total: 0, parked: 0, booked: 0, blocked: 0 },
   });
 
   // 1. Initial Data Fetch & Weather Forecast
@@ -95,6 +102,13 @@ export default function SpaceDashboard() {
       const { data: spaceData, error } = await supabase.from('parking_spaces').select('*').eq('id', id).single();
       if (error) { navigate('/provider-dashboard'); return; }
       setSpace(spaceData);
+
+      // Initialize Blocked Slots
+      setBlockedSlots({
+        car: spaceData.blocked_car || 0,
+        bike: spaceData.blocked_bike || 0,
+        suv: spaceData.blocked_suv || 0
+      });
 
       const lat = spaceData.latitude || 13.0827;
       const lng = spaceData.longitude || 80.2707;
@@ -122,7 +136,7 @@ export default function SpaceDashboard() {
   useEffect(() => {
     if (!space || !allBookings) return;
 
-    // --- A. WEATHER LOOKUP FOR SELECTED TIME ---
+    // --- A. WEATHER LOOKUP ---
     if (forecast && forecast.hourly) {
         const hourIndex = (selectedDayOffset * 24) + selectedHour;
         
@@ -132,14 +146,11 @@ export default function SpaceDashboard() {
             const code = forecast.hourly.weather_code[hourIndex];
             
             setCurrentWeather({ rainMM: rain, temp: temp, code: code });
-            
-            // Auto Flood Logic
-            const floodRisk = rain > 25 || [65, 67, 82, 95, 96, 99].includes(code);
-            setIsAutoFlood(floodRisk);
+            setIsAutoFlood(rain > 25 || [65, 67, 82, 95, 96, 99].includes(code));
         }
     }
 
-    // --- B. BOOKING & OCCUPANCY CALCULATION ---
+    // --- B. BOOKING & OCCUPANCY ---
     const filterStart = targetDate;
     const filterEnd = new Date(targetDate);
     filterEnd.setHours(filterEnd.getHours() + 1); 
@@ -158,33 +169,47 @@ export default function SpaceDashboard() {
       };
     };
 
-    const carStats = getStats('car');
     setOccupancy({
-      car: { total: space.slots_car || 0, ...carStats },
-      bike: { total: space.slots_bike || 0, ...getStats('bike') },
-      suv: { total: space.slots_suv || 0, ...getStats('suv') },
+      car: { total: space.slots_car || 0, blocked: blockedSlots.car, ...getStats('car') },
+      bike: { total: space.slots_bike || 0, blocked: blockedSlots.bike, ...getStats('bike') },
+      suv: { total: space.slots_suv || 0, blocked: blockedSlots.suv, ...getStats('suv') },
     });
 
     // --- C. ML PREDICTION ---
     if (mlReady) {
+        const carStats = getStats('car'); // Re-calculate locally since state might lag
         const occupancyRate = (carStats.parked + carStats.booked) / (space.slots_car || 1);
         const isPeak = (selectedHour >= 8 && selectedHour <= 11) || (selectedHour >= 17 && selectedHour <= 20);
         const result = predictPrice(occupancyRate, isPeak, currentWeather.rainMM, isAutoFlood || manualFloodMode);
         setPrediction(result);
     }
 
-  }, [space, allBookings, selectedDayOffset, selectedHour, forecast, mlReady, manualFloodMode, currentWeather.rainMM]);
+  }, [space, allBookings, selectedDayOffset, selectedHour, forecast, mlReady, manualFloodMode, currentWeather.rainMM, blockedSlots]);
+
+  // --- SAVE BLOCKED SLOTS ---
+  const updateBlockedSlots = async () => {
+    if (!id) return;
+    setIsUpdatingSlots(true);
+    const { error } = await supabase.from('parking_spaces').update({
+        blocked_car: blockedSlots.car,
+        blocked_bike: blockedSlots.bike,
+        blocked_suv: blockedSlots.suv
+    }).eq('id', id);
+
+    if (error) toast({ title: "Update Failed", description: error.message, variant: "destructive" });
+    else toast({ title: "Inventory Updated", description: "Your blocked slots have been saved." });
+    setIsUpdatingSlots(false);
+  };
 
   // Helpers
   const filteredHistory = useMemo(() => (allBookings.filter(b => isSameDay(new Date(b.start_time), targetDate))), [allBookings, targetDate]);
   const totalRevenue = useMemo(() => filteredHistory.reduce((sum, b) => sum + (b.total_price || 0), 0), [filteredHistory]);
   const getUnreadCount = (msgs: any[]) => (!msgs || !user) ? 0 : msgs.filter(m => m.sender_id !== user.id && !m.is_read).length;
 
-  // --- NEW: Reset to Now Function ---
   const handleResetToNow = () => {
     const now = new Date();
-    setSelectedDayOffset(0); // Today
-    setSelectedHour(now.getHours()); // Current Hour
+    setSelectedDayOffset(0); 
+    setSelectedHour(now.getHours()); 
   };
 
   const downloadQRCode = () => {
@@ -208,18 +233,16 @@ export default function SpaceDashboard() {
   return (
     <div className="min-h-screen flex flex-col relative font-sans text-slate-900 bg-slate-50">
       
-      {/* --- HEADER: TIME MACHINE & WEATHER --- */}
+      {/* HEADER */}
       <header className="sticky top-0 z-20 bg-white border-b border-slate-200 px-4 py-4 shadow-sm">
         <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
             
-            {/* Left: Title & Selected Time Weather Info */}
             <div className="flex items-center gap-4">
                 <Button variant="ghost" size="icon" onClick={() => navigate('/provider-dashboard')}><ArrowLeft /></Button>
                 <div>
                     <h1 className="text-xl font-bold text-slate-900 leading-tight flex items-center gap-2">
                         {space.title}
                     </h1>
-                    {/* Live Weather Indicator for Selected Time */}
                     <div className="flex items-center gap-3 text-xs mt-1">
                         <span className="font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">
                             {format(targetDate, "EEE, MMM do @ h:00 a")}
@@ -235,7 +258,6 @@ export default function SpaceDashboard() {
                 </div>
             </div>
 
-            {/* Middle: View Switcher */}
             <div className="bg-slate-100 p-1 rounded-lg flex items-center gap-1 w-fit">
                 <Button 
                     variant="ghost" 
@@ -255,11 +277,8 @@ export default function SpaceDashboard() {
                 </Button>
             </div>
 
-            {/* Right: Time Machine Controls */}
             <div className="flex flex-col items-end gap-2 w-full xl:w-auto">
-                {/* 1. Day Selector + Reset Button */}
                 <div className="flex items-center gap-2 w-full xl:w-auto">
-                    {/* NEW BUTTON: Reset to Now */}
                     <Button 
                         size="sm" 
                         variant="outline"
@@ -286,7 +305,6 @@ export default function SpaceDashboard() {
                     </div>
                 </div>
 
-                {/* 2. Horizontal Hour Scroll (FIXED: Increased padding and width) */}
                 <div className="flex gap-2 overflow-x-auto w-full xl:max-w-[500px] p-2 scrollbar-hide">
                     {Array.from({ length: 24 }).map((_, i) => (
                         <button
@@ -308,7 +326,6 @@ export default function SpaceDashboard() {
 
       <main className="relative z-10 p-4 max-w-7xl mx-auto w-full space-y-6">
         
-        {/* --- VIEW 1: OPERATIONS --- */}
         {viewMode === 'ops' && (
           <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
             
@@ -342,27 +359,58 @@ export default function SpaceDashboard() {
               </Card>
             </div>
 
-            <Card className="border-0 shadow-md overflow-hidden">
-              <CardHeader className="bg-slate-50/50 border-b border-slate-100 pb-2">
-                <div className="flex justify-between items-center">
-                  <CardTitle className="text-lg font-bold flex items-center gap-2">Floor Map Availability ({format(targetDate, 'h:00 a')})</CardTitle>
-                </div>
-              </CardHeader>
-              <CardContent className="p-6">
-                <Tabs defaultValue="car" className="w-full">
-                  <TabsList className="mb-6 bg-slate-100 p-1 rounded-xl">
-                    <TabsTrigger value="car">Car Floor</TabsTrigger>
-                    <TabsTrigger value="bike">Bike Zone</TabsTrigger>
-                    <TabsTrigger value="suv">Large Vehicle</TabsTrigger>
-                  </TabsList>
-                  <TabsContent value="car"><VisualGrid total={occupancy.car.total} parked={occupancy.car.parked} booked={occupancy.car.booked} type="Car" icon={Car} /></TabsContent>
-                  <TabsContent value="bike"><VisualGrid total={occupancy.bike.total} parked={occupancy.bike.parked} booked={occupancy.bike.booked} type="Bike" icon={Bike} /></TabsContent>
-                  <TabsContent value="suv"><VisualGrid total={occupancy.suv.total} parked={occupancy.suv.parked} booked={occupancy.suv.booked} type="SUV" icon={Truck} /></TabsContent>
-                </Tabs>
-              </CardContent>
-            </Card>
+            <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+                <Card className="lg:col-span-3 border-0 shadow-md overflow-hidden">
+                    <CardHeader className="bg-slate-50/50 border-b border-slate-100 pb-2">
+                        <div className="flex justify-between items-center">
+                            <CardTitle className="text-lg font-bold flex items-center gap-2">Floor Map Availability ({format(targetDate, 'h:00 a')})</CardTitle>
+                        </div>
+                    </CardHeader>
+                    <CardContent className="p-6">
+                        <Tabs defaultValue="car" className="w-full">
+                            <TabsList className="mb-6 bg-slate-100 p-1 rounded-xl">
+                                <TabsTrigger value="car">Car Floor</TabsTrigger>
+                                <TabsTrigger value="bike">Bike Zone</TabsTrigger>
+                                <TabsTrigger value="suv">Large Vehicle</TabsTrigger>
+                            </TabsList>
+                            <TabsContent value="car"><VisualGrid total={occupancy.car.total} parked={occupancy.car.parked} booked={occupancy.car.booked} blocked={occupancy.car.blocked} type="Car" icon={Car} /></TabsContent>
+                            <TabsContent value="bike"><VisualGrid total={occupancy.bike.total} parked={occupancy.bike.parked} booked={occupancy.bike.booked} blocked={occupancy.bike.blocked} type="Bike" icon={Bike} /></TabsContent>
+                            <TabsContent value="suv"><VisualGrid total={occupancy.suv.total} parked={occupancy.suv.parked} booked={occupancy.suv.booked} blocked={occupancy.suv.blocked} type="SUV" icon={Truck} /></TabsContent>
+                        </Tabs>
+                    </CardContent>
+                </Card>
+
+                {/* --- BLOCK SLOTS PANEL --- */}
+                <Card className="border-0 shadow-md bg-white">
+                    <CardHeader>
+                        <CardTitle className="text-md flex items-center gap-2 font-bold"><Lock size={18} className="text-slate-700"/> Personal Reserve</CardTitle>
+                        <CardDescription>Block slots for your own use.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                        {['car', 'bike', 'suv'].map((type) => (
+                            <div key={type} className="space-y-1.5">
+                                <label className="text-[10px] uppercase font-bold text-slate-500">Block {type}s</label>
+                                <Input 
+                                    type="number" 
+                                    min="0" 
+                                    max={space[`slots_${type}`]} 
+                                    value={blockedSlots[type as keyof typeof blockedSlots]} 
+                                    onChange={(e) => setBlockedSlots(prev => ({...prev, [type]: parseInt(e.target.value) || 0}))}
+                                    className="h-9 font-bold"
+                                />
+                            </div>
+                        ))}
+                        <Button 
+                            onClick={updateBlockedSlots} 
+                            disabled={isUpdatingSlots}
+                            className="w-full bg-slate-900 font-bold mt-2"
+                        >
+                            {isUpdatingSlots ? 'Saving...' : 'Update Inventory'}
+                        </Button>
+                    </CardContent>
+                </Card>
+            </div>
             
-            {/* BOOKING LOG */}
             <Card className="border-0 shadow-sm bg-white overflow-hidden">
                 <CardHeader className="border-b border-slate-100 bg-slate-50/50 pb-4">
                     <CardTitle className="text-lg font-bold flex items-center gap-2">
@@ -406,14 +454,14 @@ export default function SpaceDashboard() {
                                         partnerName={booking.profiles?.full_name || 'Driver'}
                                         trigger={
                                             <div className="relative inline-block">
-                                              <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full bg-slate-100 text-slate-600 hover:text-emerald-600">
+                                                <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full bg-slate-100 text-slate-600 hover:text-emerald-600">
                                                 <MessageSquare size={14} />
-                                              </Button>
-                                              {unreadCount > 0 && (
+                                                </Button>
+                                                {unreadCount > 0 && (
                                                 <div className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold h-4 w-4 flex items-center justify-center rounded-full border-2 border-white animate-bounce">
-                                                  {unreadCount}
+                                                    {unreadCount}
                                                 </div>
-                                              )}
+                                                )}
                                             </div>
                                         }
                                     />
@@ -431,11 +479,8 @@ export default function SpaceDashboard() {
           </motion.div>
         )}
 
-        {/* --- VIEW 2: SMART PRICING (ML) --- */}
         {viewMode === 'pricing' && (
           <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            
-            {/* COLUMN 1: AI Model Visualization */}
             <div className="lg:col-span-2 space-y-6">
               <Card className="border-0 shadow-xl bg-gradient-to-br from-violet-900 via-indigo-900 to-slate-900 text-white overflow-hidden relative min-h-[300px]">
                 <div className="absolute top-0 right-0 p-8 opacity-10"><BrainCircuit size={150} /></div>
@@ -469,7 +514,6 @@ export default function SpaceDashboard() {
                         </div>
                       </div>
 
-                      {/* AI Inputs Visualization */}
                       <div className="mt-8 grid grid-cols-4 gap-2 text-center">
                         <div className="bg-white/5 rounded p-2">
                           <div className="text-[10px] text-indigo-300 uppercase">Occupancy</div>
@@ -483,7 +527,7 @@ export default function SpaceDashboard() {
                            <div className="text-[10px] text-indigo-300 uppercase">Rain (Forecast)</div>
                            <div className="font-bold">{currentWeather.rainMM} mm</div>
                         </div>
-                         <div className={`rounded p-2 ${manualFloodMode || isAutoFlood ? 'bg-red-500/20 border border-red-500' : 'bg-white/5'}`}>
+                          <div className={`rounded p-2 ${manualFloodMode || isAutoFlood ? 'bg-red-500/20 border border-red-500' : 'bg-white/5'}`}>
                            <div className="text-[10px] text-indigo-300 uppercase">Flood Mode</div>
                            <div className="font-bold">{manualFloodMode || isAutoFlood ? 'YES' : 'NO'}</div>
                         </div>
@@ -493,7 +537,6 @@ export default function SpaceDashboard() {
                 </CardContent>
               </Card>
 
-              {/* Explainer */}
               <Card className="border-0 shadow-sm bg-slate-50">
                  <CardContent className="p-6">
                     <h4 className="font-bold text-slate-800 text-sm mb-2 flex items-center gap-2"><Info size={14}/> How this works</h4>
@@ -505,7 +548,6 @@ export default function SpaceDashboard() {
               </Card>
             </div>
 
-            {/* COLUMN 2: Simulation Controls */}
             <div className="space-y-6">
               <Card className="border-0 shadow-md bg-white h-full">
                 <CardHeader>
@@ -514,12 +556,11 @@ export default function SpaceDashboard() {
                 </CardHeader>
                 <CardContent className="space-y-6">
                   
-                  {/* Rain Display */}
                   <div>
                     <label className="text-xs font-bold text-slate-500 mb-2 block">Rain Intensity</label>
                     <div className="flex items-center gap-3">
-                       <CloudRain size={20} className="text-blue-500" />
-                       <div className="text-sm font-bold">{currentWeather.rainMM} mm</div>
+                        <CloudRain size={20} className="text-blue-500" />
+                        <div className="text-sm font-bold">{currentWeather.rainMM} mm</div>
                     </div>
                     <p className="text-[10px] text-slate-400 mt-1">
                         {currentWeather.rainMM > 0 ? "Rain detected in forecast." : "No rain forecasted for this hour."}
@@ -528,7 +569,6 @@ export default function SpaceDashboard() {
 
                   <div className="h-px bg-slate-100" />
 
-                  {/* Flood Toggle */}
                   <div>
                     <div className="flex items-center justify-between mb-3">
                       <span className="font-bold text-slate-700 flex items-center gap-2"><ShieldAlert size={16}/> Flood Mode</span>
@@ -552,7 +592,6 @@ export default function SpaceDashboard() {
         )}
       </main>
 
-      {/* QR Modal */}
       <AnimatePresence>
         {showQRModal && (
           <motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setShowQRModal(false)}>
@@ -568,12 +607,15 @@ export default function SpaceDashboard() {
   );
 }
 
-// ... VisualGrid & StatusBadge components ...
-function VisualGrid({ total, parked, booked, type, icon: Icon }: any) {
-  const free = Math.max(0, total - (parked + booked));
+function VisualGrid({ total, parked, booked, blocked, type, icon: Icon }: any) {
   const slots = Array.from({ length: total }, (_, i) => {
-    let status = 'free'; if (i < parked) status = 'parked'; else if (i < parked + booked) status = 'booked'; return { id: i + 1, status };
+    let status = 'free'; 
+    if (i < parked) status = 'parked'; 
+    else if (i < parked + booked) status = 'booked'; 
+    else if (i < parked + booked + blocked) status = 'blocked'; // Blocked logic
+    return { id: i + 1, status };
   });
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -584,7 +626,9 @@ function VisualGrid({ total, parked, booked, type, icon: Icon }: any) {
         <div className="flex flex-wrap gap-4 text-sm font-bold justify-end">
            <div className="flex items-center gap-2"><span className="w-4 h-4 rounded-md bg-blue-900 border border-blue-950 shadow-sm"></span> Parked ({parked})</div>
            <div className="flex items-center gap-2"><span className="w-4 h-4 rounded-md bg-yellow-400 border border-yellow-500 shadow-sm"></span> Booked ({booked})</div>
-           <div className="flex items-center gap-2"><span className="w-4 h-4 rounded-md bg-emerald-50 border border-emerald-200"></span> Available ({free})</div>
+           {/* Blocked Legend */}
+           <div className="flex items-center gap-2"><span className="w-4 h-4 rounded-md bg-slate-300 border border-slate-400 shadow-sm"></span> Blocked ({blocked})</div>
+           <div className="flex items-center gap-2"><span className="w-4 h-4 rounded-md bg-emerald-50 border border-emerald-200"></span> Available ({Math.max(0, total - parked - booked - blocked)})</div>
         </div>
       </div>
       <div className="grid grid-cols-5 sm:grid-cols-8 md:grid-cols-10 gap-4">
@@ -592,6 +636,7 @@ function VisualGrid({ total, parked, booked, type, icon: Icon }: any) {
             let styles = "";
             if (slot.status === 'parked') styles = "bg-blue-900 border-blue-950 text-blue-50 shadow-blue-900/20";
             else if (slot.status === 'booked') styles = "bg-yellow-400 border-yellow-500 text-yellow-900 shadow-yellow-400/20";
+            else if (slot.status === 'blocked') styles = "bg-slate-300 border-slate-400 text-slate-600 shadow-sm cursor-not-allowed"; // Blocked Style
             else styles = "bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100 cursor-pointer";
             return ( <motion.div key={slot.id} initial={{ scale: 0.8 }} animate={{ scale: 1 }} className={`aspect-square rounded-xl flex items-center justify-center font-bold border-b-4 transition-all shadow-sm ${styles}`}>{slot.id}</motion.div> );
           })}

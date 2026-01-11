@@ -10,9 +10,13 @@ import 'leaflet/dist/leaflet.css';
 import L from 'leaflet'; 
 import { 
   ArrowRight, Loader2, CloudLightning, CloudRain, ShieldCheck,
-  Grid3X3, Clock, User, MapPin, ChevronDown, ChevronUp, Bike, Car, Truck, Target
+  Grid3X3, Clock, User, MapPin, ChevronDown, ChevronUp, Bike, Car, Truck, Target,
+  Sun, Cloud, CloudDrizzle, Wind, Droplets, Umbrella, BrainCircuit
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+
+// --- IMPORT ML MODEL ---
+import { trainModel, predictPrice } from '@/lib/mlmodel';
 
 // --- TYPES ---
 interface ParkingSpace {
@@ -32,8 +36,11 @@ interface ParkingSpace {
   availability_type?: '24/7' | 'custom';
   available_from?: string;
   available_to?: string;
+  
+  // Computed Props
   distance?: number;
   displayPrice?: number;
+  surgeMultiplier?: number;
 }
 
 // --- CONFIGURATION ---
@@ -68,15 +75,35 @@ const isSpaceOpen = (spot: ParkingSpace) => {
     return currentMinutes >= start && currentMinutes < end;
 };
 
-// --- ICONS ---
+// --- WEATHER HELPERS ---
+const getWeatherIcon = (code: number) => {
+    if (code === 0) return <Sun size={14} className="text-amber-500" />;
+    if (code >= 1 && code <= 3) return <Cloud size={14} className="text-slate-400" />;
+    if (code >= 51 && code <= 67) return <CloudDrizzle size={14} className="text-blue-400" />;
+    if (code >= 71 && code <= 77) return <Wind size={14} className="text-slate-500" />;
+    if (code >= 80 && code <= 99) return <CloudLightning size={14} className="text-purple-500" />;
+    return <Cloud size={14} />;
+};
+
+const getWeatherLabel = (code: number) => {
+    if (code === 0) return "Clear";
+    if (code >= 1 && code <= 3) return "Cloudy";
+    if (code >= 51 && code <= 67) return "Rainy";
+    if (code >= 80 && code <= 99) return "Stormy";
+    return "Moderate";
+};
+
+// --- ICONS (UPDATED: Back to "P" Symbol) ---
 const createParkingIcon = (spot: ParkingSpace, isSelected: boolean, isSafeMode: boolean) => {
   const bgColor = isSafeMode ? '#3b82f6' : (isSelected ? '#10b981' : '#1e293b');
+  
   const html = `
     <div class="pin-wrapper">
       <div class="pin-icon" style="background-color: ${bgColor};">
         <span class="icon-char">P</span>
       </div>
       <div class="pin-pulse" style="border-color: ${bgColor};"></div>
+      
       <div class="pin-tooltip">
         <div class="tooltip-header">
           <strong>${spot.title}</strong>
@@ -84,7 +111,7 @@ const createParkingIcon = (spot: ParkingSpace, isSelected: boolean, isSafeMode: 
         </div>
         <div class="tooltip-prices">
           <div class="price-item"><span class="icon">🏍️</span> <span class="val">₹${spot.price_bike || '--'}</span></div>
-          <div class="price-item active"><span class="icon">🚗</span> <span class="val">₹${spot.price_car || '--'}</span></div>
+          <div class="price-item active"><span class="icon">🚗</span> <span class="val">₹${spot.displayPrice || '--'}</span></div>
         </div>
         <div class="tooltip-arrow"></div>
       </div>
@@ -165,51 +192,79 @@ export default function Browse() {
   const [sosMode, setSosMode] = useState(false);
   const [showStormIntro, setShowStormIntro] = useState(false);
   
-  // MAP STATE
+  // WEATHER & AI STATE
+  const [weather, setWeather] = useState<{ temp: number; code: number; rain: number; prob: number } | null>(null);
+  const [isAiReady, setIsAiReady] = useState(false);
+  
   const [mapCenter, setMapCenter] = useState<[number, number]>([13.0827, 80.2707]);
   const [destination, setDestination] = useState<{ lat: number; lon: number; name: string } | null>(null);
 
   const userAvatar = user?.user_metadata?.avatar_url || (user as any)?.avatar_url;
 
+  // 1. INITIAL FETCH & AI TRAINING
   useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true);
-      const { data: spaceData } = await supabase.from('parking_spaces').select('*').eq('is_active', true);
-      setSpaces(spaceData || []);
-      setLoading(false);
+    const init = async () => {
+        setLoading(true);
+        const { data: spaceData } = await supabase.from('parking_spaces').select('*').eq('is_active', true);
+        setSpaces(spaceData || []);
+        
+        console.log("Training Pricing AI...");
+        await trainModel(); 
+        setIsAiReady(true);
+        console.log("AI Model Trained.");
+        
+        setLoading(false);
     };
-    fetchData();
-  }, [user]);
+    init();
+  }, []);
 
-  // --- LOGIC 1: ALL VISIBLE SPOTS (FOR INITIAL MAP) ---
+  // --- LOGIC 1: ALL VISIBLE SPOTS FOR MAP ---
   const allVisibleSpots = useMemo(() => {
+    
+    // Prepare variables for ML
+    const currentHour = new Date().getHours();
+    const isPeak = currentHour >= 9 && currentHour <= 19;
+    const rainScore = weather ? weather.rain * 10 : 0;
+
     return spaces.filter(s => {
-        if (sosMode && !s.is_flood_safe) return false; // Strict Storm Mode
-        if (!isSpaceOpen(s)) return false; // Strict Timing
+        if (sosMode && !s.is_flood_safe) return false; 
+        if (!isSpaceOpen(s)) return false; 
         return true;
-    }).map(s => ({
-        ...s,
-        displayPrice: sosMode ? Math.round((s.price_car || 0) * 1.5) : (s.price_car || 0),
-        distance: calculateDistance(mapCenter[0], mapCenter[1], s.latitude, s.longitude)
-    }));
-  }, [spaces, sosMode, mapCenter]);
+    }).map(s => {
+        let multiplier = 1.0;
 
-  // --- LOGIC 2: NEAREST SPOTS (FOR LIST & SEARCHED MAP) ---
+        // --- INDIVIDUAL ML PREDICTION PER SPOT ---
+        if (isAiReady) {
+            // Generate a deterministic fake occupancy based on ID character code
+            const fakeOccupancy = (s.id.charCodeAt(0) % 10) / 10; // 0.0 to 0.9
+            
+            multiplier = predictPrice(
+                fakeOccupancy, 
+                isPeak, 
+                rainScore, 
+                sosMode
+            );
+        }
+
+        const base = s.price_car || 0;
+        const dynamicPrice = Math.ceil(base * multiplier);
+
+        return {
+            ...s,
+            displayPrice: dynamicPrice, 
+            surgeMultiplier: multiplier,
+            distance: calculateDistance(mapCenter[0], mapCenter[1], s.latitude, s.longitude)
+        };
+    });
+  }, [spaces, sosMode, mapCenter, weather, isAiReady]); 
+
+  // --- LOGIC 2: NEAREST SPOTS FOR LIST ---
   const nearestSpots = useMemo(() => {
+    if (!showResults) return [];
     const sorted = [...allVisibleSpots].sort((a, b) => (a.distance || 0) - (b.distance || 0));
-    const limited = sorted.slice(0, 10);
+    return sorted.slice(0, 10);
+  }, [allVisibleSpots, showResults]);
 
-    if (selectedSpot) {
-       const selected = limited.find(s => s.id === selectedSpot);
-       if (selected) return [selected, ...limited.filter(s => s.id !== selectedSpot)];
-       const hiddenSelected = allVisibleSpots.find(s => s.id === selectedSpot);
-       if (hiddenSelected) return [hiddenSelected, ...limited.slice(0, 9)];
-    }
-    return limited;
-  }, [allVisibleSpots, selectedSpot]);
-
-  // --- LOGIC 3: WHICH SPOTS TO SHOW ON MAP? ---
-  // If search results are open, show ONLY nearest. Otherwise, show ALL.
   const mapSpots = showResults ? nearestSpots : allVisibleSpots;
 
   // --- SEARCH HANDLER ---
@@ -218,8 +273,10 @@ export default function Browse() {
     if (!searchQuery.trim()) return;
     setIsSearching(true);
     try {
+      // 1. TomTom Geocoding
       const response = await fetch(`https://api.tomtom.com/search/2/search/${encodeURIComponent(searchQuery)}.json?key=${TOMTOM_API_KEY}&limit=1&lat=13.0827&lon=80.2707`);
       const data = await response.json();
+      
       if (data.results?.length > 0) {
         const { lat, lon } = data.results[0].position;
         const address = data.results[0].address.freeformAddress;
@@ -227,6 +284,34 @@ export default function Browse() {
         setMapCenter([lat, lon]); 
         setDestination({ lat, lon, name: address }); 
         
+        // 2. Open-Meteo Weather Check
+        try {
+            const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code,precipitation&hourly=precipitation_probability`);
+            const weatherData = await weatherRes.json();
+            const current = weatherData.current;
+            const hourly = weatherData.hourly;
+            
+            if (current) {
+                const currentHour = new Date().getHours();
+                const prob = hourly?.precipitation_probability?.[currentHour] || 0;
+
+                setWeather({ 
+                    temp: current.temperature_2m, 
+                    code: current.weather_code,
+                    rain: current.precipitation || 0,
+                    prob: prob
+                });
+                
+                if ((current.weather_code >= 51 || current.precipitation > 0) && !sosMode) {
+                    setSosMode(true);
+                    setShowStormIntro(true);
+                    setTimeout(() => setShowStormIntro(false), 2500);
+                }
+            }
+        } catch (err) {
+            console.error("Weather failed", err);
+        }
+
         setShowResults(true); 
         setIsResultsCollapsed(true);
         setSelectedSpot(null);
@@ -245,15 +330,7 @@ export default function Browse() {
         <MapContainer center={mapCenter} zoom={13} zoomControl={false} style={{ height: '100%', width: '100%' }}>
           <TileLayer url={sosMode ? DARK_MAP : LIGHT_MAP} attribution='&copy; TomTom' />
           <MapUpdater center={mapCenter} />
-          
-          {destination && (
-            <Marker 
-              position={[destination.lat, destination.lon]} 
-              icon={createDestinationIcon()} 
-            />
-          )}
-
-          {/* DYNAMIC MAP PINS: Switches between ALL and NEAREST based on search state */}
+          {destination && <Marker position={[destination.lat, destination.lon]} icon={createDestinationIcon()} />}
           {mapSpots.map((spot) => (
             <Marker 
               key={spot.id} 
@@ -272,10 +349,21 @@ export default function Browse() {
         </MapContainer>
       </div>
 
+      {/* HEADER */}
       <header className="relative z-20 p-4 flex justify-between items-center pointer-events-none">
         <div className="pointer-events-auto bg-white/90 p-2 rounded-full shadow-lg cursor-pointer hover:scale-105 transition-transform" onClick={() => navigate('/')}>
           <Logo color={sosMode ? 'light' : 'dark'} size="sm" />
         </div>
+        
+        {/* NEW: AI STATUS BADGE */}
+        {/* (Only show if at least ONE visible spot has surge, picking first one as example) */}
+        {isAiReady && allVisibleSpots.some(s => (s.surgeMultiplier || 1) > 1.0) && (
+            <div className="pointer-events-auto flex items-center gap-2 bg-emerald-900/90 text-emerald-100 px-4 py-2 rounded-full shadow-xl border border-emerald-500/30 backdrop-blur-md animate-pulse">
+                <BrainCircuit size={16} />
+                <span className="text-xs font-bold">Dynamic Pricing Active</span>
+            </div>
+        )}
+
         <div className="flex items-center gap-3 pointer-events-auto">
           <Button onClick={() => navigate('/my-bookings')} className={`rounded-full shadow-lg h-10 px-4 font-bold border-none transition-all ${sosMode ? 'bg-slate-900/80 text-blue-400 hover:bg-slate-800' : 'bg-white/90 text-slate-900 hover:bg-white'}`}>
             <Clock size={16} className="mr-2" /> My Bookings
@@ -286,6 +374,7 @@ export default function Browse() {
         </div>
       </header>
 
+      {/* SEARCH & RESULTS */}
       <main className="relative z-10 flex-1 flex flex-col justify-end pointer-events-none pb-0">
         
         {!showResults && (
@@ -320,23 +409,45 @@ export default function Browse() {
             >
               <div className="p-6 pb-2 cursor-pointer bg-transparent" onClick={toggleCollapse}>
                 <div className="w-12 h-1.5 bg-slate-300 rounded-full mx-auto mb-4 opacity-50" />
-                <div className="flex justify-between items-center">
+                
+                <div className="flex justify-between items-center mb-4">
                   <div>
                     <h2 className="text-xl font-black flex items-center gap-2">
                       {sosMode ? <ShieldCheck className="text-blue-500" /> : <Grid3X3 size={20} />}
                       {destination ? (
-                          <span className="truncate max-w-[200px]">Near {destination.name.split(',')[0]}</span>
-                      ) : (
-                          <span>{sosMode ? 'Flood-Safe Zones' : 'Nearest Parking'}</span>
-                      )}
+                          <span className="truncate max-w-[150px] sm:max-w-[200px]">Near {destination.name.split(',')[0]}</span>
+                      ) : 'Nearest Parking'}
                     </h2>
                     <p className="text-xs opacity-60 font-medium ml-1">Showing {nearestSpots.length} closest spots</p>
                   </div>
-                  <div className="flex gap-2">
+
+                  <div className="flex items-center gap-2">
+                    {/* WEATHER BADGE */}
+                    {weather && (
+                        <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-bold transition-colors ${weather.rain > 0 ? 'bg-blue-600 text-white border-blue-500 animate-pulse' : (sosMode ? 'bg-slate-800 border-slate-700 text-slate-300' : 'bg-blue-50 border-blue-100 text-blue-600')}`}>
+                            {getWeatherIcon(weather.code)}
+                            <span>{weather.temp}°C</span>
+                            
+                            {weather.rain > 0 ? (
+                                <span className="flex items-center gap-1 border-l border-white/30 pl-2">
+                                    <Droplets size={12} className="fill-white text-white" />
+                                    {weather.rain}mm
+                                </span>
+                            ) : weather.prob > 0 ? (
+                                <span className="flex items-center gap-1 border-l border-current/20 pl-2">
+                                    <Umbrella size={12} />
+                                    {weather.prob}% Rain
+                                </span>
+                            ) : (
+                                <span className="hidden sm:inline border-l border-current/20 pl-2 opacity-80">{getWeatherLabel(weather.code)}</span>
+                            )}
+                        </div>
+                    )}
+                    
                     <Button variant="ghost" size="icon" className="rounded-full hover:bg-slate-100" onClick={(e) => { e.stopPropagation(); toggleCollapse(); }}>
                       {isResultsCollapsed ? <ChevronUp /> : <ChevronDown />}
                     </Button>
-                    <Button variant="ghost" className="rounded-full text-xs font-bold" onClick={(e) => { e.stopPropagation(); setShowResults(false); setDestination(null); }}>Close</Button>
+                    <Button variant="ghost" className="rounded-full text-xs font-bold" onClick={(e) => { e.stopPropagation(); setShowResults(false); setDestination(null); setWeather(null); }}>Close</Button>
                   </div>
                 </div>
               </div>
@@ -357,7 +468,14 @@ export default function Browse() {
                     <div className="flex-1 min-w-0">
                       <div className="flex justify-between items-start">
                         <h4 className="font-bold truncate text-base">{spot.title}</h4>
-                        <p className={`font-black ${sosMode ? 'text-blue-400' : 'text-emerald-700'}`}>₹{spot.displayPrice}</p>
+                        <div className="flex flex-col items-end">
+                            <p className={`font-black ${sosMode ? 'text-blue-400' : 'text-emerald-700'}`}>₹{spot.displayPrice}</p>
+                            {spot.surgeMultiplier && spot.surgeMultiplier > 1.0 && (
+                                <span className="text-[10px] font-bold text-red-500 flex items-center gap-1">
+                                    <BrainCircuit size={10} /> {spot.surgeMultiplier}x Surge
+                                </span>
+                            )}
+                        </div>
                       </div>
                       
                       <div className="flex items-center gap-2 mt-1">
@@ -374,8 +492,8 @@ export default function Browse() {
                       </div>
 
                       <div className="flex gap-2 mt-3 items-center">
-                        {spot.price_bike && <span className="flex items-center gap-1 text-[10px] font-bold bg-slate-100 px-2 py-1 rounded-md text-slate-600"><Bike size={10}/> ₹{spot.price_bike}</span>}
-                        {spot.price_car && <span className="flex items-center gap-1 text-[10px] font-bold bg-emerald-50 px-2 py-1 rounded-md text-emerald-700 border border-emerald-100"><Car size={10}/> ₹{spot.price_car}</span>}
+                        {spot.price_bike && <span className="flex items-center gap-1 text-[10px] font-bold bg-slate-100 px-2 py-1 rounded-md text-slate-600"><Bike size={10}/> Bike</span>}
+                        {spot.price_car && <span className="flex items-center gap-1 text-[10px] font-bold bg-emerald-50 px-2 py-1 rounded-md text-emerald-700 border border-emerald-100"><Car size={10}/> Car</span>}
                       </div>
                     </div>
                   </div>
