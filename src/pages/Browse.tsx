@@ -10,7 +10,7 @@ import 'leaflet/dist/leaflet.css';
 import L from 'leaflet'; 
 import { 
   ArrowRight, Loader2, CloudLightning, CloudRain, ShieldCheck,
-  Grid3X3, Clock, User, MapPin, ChevronDown, ChevronUp, Bike, Car, Truck, Target,
+  Grid3X3, Clock, User, MapPin, ChevronDown, ChevronUp, Bike, Car, Truck,
   Sun, Cloud, CloudDrizzle, Wind, Droplets, Umbrella, BrainCircuit
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -36,12 +36,14 @@ interface ParkingSpace {
   availability_type?: '24/7' | 'custom';
   available_from?: string;
   available_to?: string;
+  total_spots?: number; // total capacity for the space
   
   // Computed Props
   distance?: number;
   displayPrice?: number;
   surgeMultiplier?: number;
 }
+
 
 // --- CONFIGURATION ---
 const TOMTOM_API_KEY = "LH8w4oyNpv19Ok0SDqxyayikvpw5DrTC"; 
@@ -74,6 +76,7 @@ const isSpaceOpen = (spot: ParkingSpace) => {
     const end = toH * 60 + toM;
     return currentMinutes >= start && currentMinutes < end;
 };
+
 
 // --- WEATHER HELPERS ---
 const getWeatherIcon = (code: number) => {
@@ -112,6 +115,7 @@ const createParkingIcon = (spot: ParkingSpace, isSelected: boolean, isSafeMode: 
         <div class="tooltip-prices">
           <div class="price-item"><span class="icon">🏍️</span> <span class="val">₹${spot.price_bike || '--'}</span></div>
           <div class="price-item active"><span class="icon">🚗</span> <span class="val">₹${spot.displayPrice || '--'}</span></div>
+          <div class="price-item"><span class="icon">🚙</span> <span class="val">₹${spot.price_suv || '--'}</span></div>
         </div>
         <div class="tooltip-arrow"></div>
       </div>
@@ -199,7 +203,9 @@ export default function Browse() {
   const [mapCenter, setMapCenter] = useState<[number, number]>([13.0827, 80.2707]);
   const [destination, setDestination] = useState<{ lat: number; lon: number; name: string } | null>(null);
 
-  const userAvatar = user?.user_metadata?.avatar_url || (user as any)?.avatar_url;
+  type UserWithAvatar = { user_metadata?: { avatar_url?: string }; avatar_url?: string };
+  const userAvatar = (user as UserWithAvatar | null | undefined)?.user_metadata?.avatar_url
+    ?? (user as UserWithAvatar | null | undefined)?.avatar_url;
 
   // 1. INITIAL FETCH & AI TRAINING
   useEffect(() => {
@@ -246,12 +252,16 @@ export default function Browse() {
             );
         }
 
-        const base = s.price_car || 0;
-        const dynamicPrice = Math.ceil(base * multiplier);
+          const baseCar = s.price_car || 0;
+          const baseSuv = s.price_suv || 0;
+          const dynamicCar = Math.ceil(baseCar * multiplier);
+          const dynamicSuv = Math.ceil(baseSuv * multiplier);
 
         return {
             ...s,
-            displayPrice: dynamicPrice, 
+            displayPrice: dynamicCar,
+            price_car: dynamicCar,
+            price_suv: dynamicSuv,
             surgeMultiplier: multiplier,
             distance: calculateDistance(mapCenter[0], mapCenter[1], s.latitude, s.longitude)
         };
@@ -383,10 +393,6 @@ export default function Browse() {
               <CardContent className="p-6">
                 <div className="flex justify-between items-center mb-4">
                   <h1 className="text-xl font-bold tracking-tight">Where to park?</h1>
-                  <div onClick={() => { if(!sosMode) { setShowStormIntro(true); setTimeout(() => setSosMode(true), 800); setTimeout(() => setShowStormIntro(false), 2500); } else setSosMode(false); }} className={`flex items-center gap-2 px-4 py-2 rounded-full cursor-pointer transition-all ${sosMode ? 'bg-blue-600 border-blue-400 shadow-lg' : 'bg-slate-100 border-slate-200'}`}>
-                    {sosMode ? <CloudLightning size={16} /> : <CloudRain size={16} />}
-                    <span className="text-[10px] font-black uppercase">{sosMode ? 'Storm Mode' : 'Normal'}</span>
-                  </div>
                 </div>
                 <form onSubmit={handleSearch} className={`flex items-center p-4 rounded-2xl border transition-all ${sosMode ? 'bg-slate-800 border-slate-700' : 'bg-slate-100 border-transparent focus-within:bg-white focus-within:border-emerald-500/30'}`}>
                   <input className="bg-transparent w-full outline-none font-medium text-lg placeholder:text-slate-400" placeholder="Enter destination..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
@@ -494,6 +500,7 @@ export default function Browse() {
                       <div className="flex gap-2 mt-3 items-center">
                         {spot.price_bike && <span className="flex items-center gap-1 text-[10px] font-bold bg-slate-100 px-2 py-1 rounded-md text-slate-600"><Bike size={10}/> Bike</span>}
                         {spot.price_car && <span className="flex items-center gap-1 text-[10px] font-bold bg-emerald-50 px-2 py-1 rounded-md text-emerald-700 border border-emerald-100"><Car size={10}/> Car</span>}
+                        {spot.price_suv && <span className="flex items-center gap-1 text-[10px] font-bold bg-amber-50 px-2 py-1 rounded-md text-amber-700 border border-amber-100">🚙 SUV</span>}
                       </div>
                     </div>
                   </div>
