@@ -22,8 +22,11 @@ import {
   Loader2,
   Zap,
   ShieldCheck,
-  Clock, // Added
-  Moon // Added
+  Clock,
+  Moon,
+  CloudLightning,
+  TrendingUp,
+  Droplets
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -33,22 +36,31 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { motion, AnimatePresence } from 'framer-motion';
 
-// --- TYPES (Updated to include Timing) ---
+// --- IMPORT ML MODEL ---
+// Ensure src/lib/mlmodel.ts exists as previously instructed
+import { trainModel, predictPrice } from '@/lib/mlmodel';
+
+// --- TYPES ---
 interface Space {
   id: string;
   title: string;
   address: string;
-  price: number;
+  price: number; 
   rating: number;
   reviews: number;
   totalBookings: number;
   earnings: number;
   isActive: boolean;
   type: 'private' | 'commercial';
-  // New Timing Fields
+  isFloodSafe: boolean; 
+  
+  // Timing
   availabilityType: '24/7' | 'custom';
   availableFrom: string | null;
   availableTo: string | null;
+
+  // Computed
+  livePrice?: number; 
 }
 
 export default function ProviderDashboard() {
@@ -58,8 +70,13 @@ export default function ProviderDashboard() {
 
   const [spaces, setSpaces] = useState<Space[]>([]);
   const [loading, setLoading] = useState(true);
+  
+  // ML & Weather State
+  const [weather, setWeather] = useState<{ temp: number; rain: number; code: number } | null>(null);
+  const [surgeMultiplier, setSurgeMultiplier] = useState(1.0);
+  const [mlReady, setMlReady] = useState(false);
 
-  // --- DATA FETCHING ---
+  // --- 1. FETCH DATA & INIT ---
   useEffect(() => {
     const fetchSpaces = async () => {
       if (!user) return;
@@ -69,16 +86,14 @@ export default function ProviderDashboard() {
           .from('parking_spaces')
           .select(`
             *,
-            bookings (
-              total_price,
-              status
-            )
+            bookings ( total_price, status )
           `)
           .eq('owner_id', user.id)
           .order('created_at', { ascending: false });
 
         if (error) throw error;
 
+        // Process Spaces
         const formattedSpaces: Space[] = (data || []).map((s: any) => {
           const validBookings = s.bookings?.filter((b: any) => b.status === 'confirmed' || b.status === 'completed') || [];
           const earnings = validBookings.reduce((sum: number, b: any) => sum + (Number(b.total_price) || 0), 0);
@@ -90,11 +105,11 @@ export default function ProviderDashboard() {
             price: s.price_car || s.price_bike || s.price_suv || 0,
             isActive: s.is_active,
             type: s.space_type,
+            isFloodSafe: s.is_flood_safe,
             rating: 5.0, 
             reviews: 0,
             totalBookings: validBookings.length,
             earnings,
-            // Map Timing Fields
             availabilityType: s.availability_type || '24/7',
             availableFrom: s.available_from,
             availableTo: s.available_to
@@ -102,6 +117,28 @@ export default function ProviderDashboard() {
         });
 
         setSpaces(formattedSpaces);
+
+        // --- 2. GET WEATHER (Using first space location or default Chennai) ---
+        if (formattedSpaces.length > 0) {
+            const lat = data[0].latitude || 13.0827;
+            const lon = data[0].longitude || 80.2707;
+            
+            fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,rain,weather_code`)
+                .then(res => res.json())
+                .then(wData => {
+                    if (wData.current) {
+                        setWeather({
+                            temp: wData.current.temperature_2m,
+                            rain: wData.current.rain,
+                            code: wData.current.weather_code
+                        });
+                    }
+                });
+        }
+
+        // --- 3. INIT ML MODEL ---
+        trainModel().then(() => setMlReady(true));
+
       } catch (err: any) {
         console.error("Error fetching spaces:", err);
         toast({ title: "Error", description: "Failed to load dashboard.", variant: "destructive" });
@@ -112,6 +149,33 @@ export default function ProviderDashboard() {
 
     fetchSpaces();
   }, [user, toast]);
+
+  // --- 4. CALCULATE SURGE ---
+  useEffect(() => {
+    if (mlReady && weather) {
+        const currentHour = new Date().getHours();
+        const isPeak = currentHour >= 9 && currentHour <= 20; 
+        const isFlood = weather.rain > 5; 
+
+        // Run AI Prediction
+        const prediction = predictPrice(
+            0.7, // Assume 70% occupancy for provider estimation
+            isPeak,
+            weather.rain * 10, 
+            isFlood
+        );
+        
+        setSurgeMultiplier(prediction);
+    }
+  }, [mlReady, weather]);
+
+  const spacesWithLivePrice = useMemo(() => {
+      return spaces.map(s => ({
+          ...s,
+          livePrice: Math.ceil(s.price * surgeMultiplier)
+      }));
+  }, [spaces, surgeMultiplier]);
+
 
   // --- STATS ---
   const stats = useMemo(() => {
@@ -135,26 +199,61 @@ export default function ProviderDashboard() {
     const { error } = await supabase.from('parking_spaces').update({ is_active: !currentStatus }).eq('id', id);
     if (error) {
       toast({ title: "Error", description: "Could not update status.", variant: "destructive" });
-      setSpaces((s) => s.map((sp) => (sp.id === id ? { ...sp, isActive: currentStatus } : sp))); // revert
+      setSpaces((s) => s.map((sp) => (sp.id === id ? { ...sp, isActive: currentStatus } : sp))); 
     } else {
       toast({ title: !currentStatus ? "Space Activated" : "Space Deactivated" });
     }
   };
 
+  // --- ROBUST DELETE FUNCTION ---
   const handleDelete = async (id: string) => {
-    if (!confirm("Delete this listing?")) return;
-    const { error } = await supabase.from('parking_spaces').delete().eq('id', id);
-    if (error) toast({ title: "Error", description: "Could not delete space.", variant: "destructive" });
-    else {
-      setSpaces((s) => s.filter((x) => x.id !== id));
-      toast({ title: "Deleted", description: "Listing removed." });
+    if (!confirm("Are you sure? This will permanently delete the space and ALL its history.")) return;
+
+    try {
+        // 1. Get associated bookings (needed to find messages)
+        const { data: bookings } = await supabase.from('bookings').select('id').eq('space_id', id);
+        
+        // 2. Delete Messages linked to those bookings
+        if (bookings && bookings.length > 0) {
+            const bookingIds = bookings.map(b => b.id);
+            await supabase.from('messages').delete().in('booking_id', bookingIds);
+        }
+
+        // 3. Delete Bookings
+        const { error: bookingError } = await supabase.from('bookings').delete().eq('space_id', id);
+        if (bookingError) throw new Error(`Could not delete bookings: ${bookingError.message}`);
+
+        // 4. Delete Reviews
+        await supabase.from('reviews').delete().eq('space_id', id);
+
+        // 5. Delete Favorites (No .catch needed, just await result)
+        await supabase.from('favorites').delete().eq('space_id', id);
+
+        // 6. Finally, Delete the Space
+        const { error: spaceError } = await supabase.from('parking_spaces').delete().eq('id', id);
+        
+        if (spaceError) {
+            throw spaceError;
+        }
+
+        // Success Update UI
+        setSpaces((s) => s.filter((x) => x.id !== id));
+        toast({ title: "Deleted", description: "Listing and history removed successfully." });
+
+    } catch (error: any) {
+        console.error("Delete failed:", error);
+        toast({ 
+            title: "Deletion Failed", 
+            description: error.message || "Check database policies/constraints.", 
+            variant: "destructive" 
+        });
     }
   };
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-900 selection:bg-emerald-100 selection:text-emerald-900">
       
-      {/* --- MODERN NAV HEADER --- */}
+      {/* HEADER */}
       <header className="sticky top-0 z-50 w-full border-b border-slate-200 bg-white/80 backdrop-blur-xl">
         <div className="mx-auto max-w-7xl flex items-center justify-between px-6 py-4">
           <div className="flex items-center gap-2">
@@ -178,7 +277,7 @@ export default function ProviderDashboard() {
 
       <main className="relative z-10 px-4 py-8 max-w-7xl mx-auto space-y-10">
         
-        {/* --- HERO SECTION --- */}
+        {/* HERO SECTION */}
         <motion.div 
           initial={{ opacity: 0, y: 10 }} 
           animate={{ opacity: 1, y: 0 }} 
@@ -200,27 +299,39 @@ export default function ProviderDashboard() {
           </Button>
         </motion.div>
 
-        {/* --- STATS GRID --- */}
+        {/* WEATHER & SURGE ALERT BANNER */}
+        {weather && (weather.rain > 0 || surgeMultiplier > 1.0) && (
+            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} className="overflow-hidden">
+                <div className={`rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm border ${weather.rain > 5 ? 'bg-indigo-900 text-white border-indigo-800' : 'bg-emerald-50 border-emerald-100'}`}>
+                    <div className="flex items-center gap-3">
+                        <div className={`p-2 rounded-full ${weather.rain > 5 ? 'bg-white/10' : 'bg-white'}`}>
+                            {weather.rain > 5 ? <CloudLightning size={24} className="text-yellow-400 animate-pulse" /> : <TrendingUp size={24} className="text-emerald-600" />}
+                        </div>
+                        <div>
+                            <h3 className="font-bold text-lg leading-tight">
+                                {weather.rain > 5 ? "Storm Protocol Active" : "High Demand Detected"}
+                            </h3>
+                            <p className={`text-sm ${weather.rain > 5 ? 'text-indigo-200' : 'text-slate-500'}`}>
+                                {weather.rain > 0 ? `Heavy Rain (${weather.rain}mm).` : 'Peak hours active.'} AI has increased rates by <strong>{surgeMultiplier}x</strong>.
+                            </p>
+                        </div>
+                    </div>
+                    <div className={`px-4 py-2 rounded-lg font-mono font-bold text-xl ${weather.rain > 5 ? 'bg-white/10' : 'bg-white text-emerald-700'}`}>
+                        {surgeMultiplier}x Boost
+                    </div>
+                </div>
+            </motion.div>
+        )}
+
+        {/* STATS GRID */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatsCard 
-            icon={DollarSign} label="Total Revenue" value={`₹${stats.totalEarnings.toLocaleString()}`} 
-            color="emerald" delay={0.1} 
-          />
-          <StatsCard 
-            icon={Car} label="Total Bookings" value={stats.totalBookings} 
-            color="blue" delay={0.2} 
-          />
-          <StatsCard 
-            icon={LayoutDashboard} label="Active Listings" value={stats.activeSpaces} 
-            color="indigo" delay={0.3} 
-          />
-          <StatsCard 
-            icon={Star} label="Rating Score" value={stats.avgRating} 
-            color="amber" delay={0.4} 
-          />
+          <StatsCard icon={DollarSign} label="Total Revenue" value={`₹${stats.totalEarnings.toLocaleString()}`} color="emerald" delay={0.1} />
+          <StatsCard icon={Car} label="Total Bookings" value={stats.totalBookings} color="blue" delay={0.2} />
+          <StatsCard icon={LayoutDashboard} label="Active Listings" value={stats.activeSpaces} color="indigo" delay={0.3} />
+          <StatsCard icon={Star} label="Rating Score" value={stats.avgRating} color="amber" delay={0.4} />
         </div>
 
-        {/* --- SPACES LIST --- */}
+        {/* SPACES LIST */}
         <section>
           <div className="flex items-center gap-3 mb-6">
             <h2 className="text-2xl font-bold text-slate-800">Your Properties</h2>
@@ -247,12 +358,13 @@ export default function ProviderDashboard() {
           ) : (
             <div className="grid gap-6">
               <AnimatePresence>
-                {spaces.map((space, index) => (
+                {spacesWithLivePrice.map((space, index) => (
                   <SpaceItem 
                     key={space.id} 
                     space={space} 
                     index={index} 
                     navigate={navigate}
+                    surge={surgeMultiplier} // Pass surge info
                     onToggle={() => toggleSpaceActive(space.id, space.isActive)}
                     onDelete={() => handleDelete(space.id)}
                   />
@@ -275,11 +387,8 @@ function StatsCard({ icon: Icon, label, value, color, delay }: any) {
     indigo: "bg-indigo-50 text-indigo-600 ring-indigo-100",
     amber: "bg-amber-50 text-amber-600 ring-amber-100",
   };
-  
   return (
-    <motion.div 
-      initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay, duration: 0.4 }}
-    >
+    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay, duration: 0.4 }}>
       <Card className="border-0 shadow-sm hover:shadow-md transition-shadow bg-white overflow-hidden group">
         <CardContent className="p-6 flex items-start justify-between">
           <div>
@@ -295,83 +404,39 @@ function StatsCard({ icon: Icon, label, value, color, delay }: any) {
   );
 }
 
-// --- TIMING HELPER FUNCTION ---
 const getStatusDisplay = (space: Space) => {
-  // 1. Manually Inactive
-  if (!space.isActive) {
-    return {
-      color: "bg-slate-200 text-slate-500",
-      icon: <ToggleLeft size={12} />,
-      label: "Offline"
-    };
-  }
-
-  // 2. Custom Timing Check
+  if (!space.isActive) return { color: "bg-slate-200 text-slate-500", icon: <ToggleLeft size={12} />, label: "Offline" };
   if (space.availabilityType === 'custom' && space.availableFrom && space.availableTo) {
     const now = new Date();
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
-
     const [fromH, fromM] = space.availableFrom.split(':').map(Number);
     const [toH, toM] = space.availableTo.split(':').map(Number);
-    
     const startMinutes = fromH * 60 + fromM;
     const endMinutes = toH * 60 + toM;
-
     const isOpen = currentMinutes >= startMinutes && currentMinutes < endMinutes;
-
-    if (!isOpen) {
-      return {
-        color: "bg-amber-100 text-amber-700",
-        icon: <Moon size={12} className="fill-amber-700" />,
-        label: "Closed Now"
-      };
-    }
+    if (!isOpen) return { color: "bg-amber-100 text-amber-700", icon: <Moon size={12} className="fill-amber-700" />, label: "Closed Now" };
   }
-
-  // 3. Active & Open
-  return {
-    color: "bg-emerald-100 text-emerald-700",
-    icon: <Zap size={12} className="fill-emerald-700" />,
-    label: "Live"
-  };
+  return { color: "bg-emerald-100 text-emerald-700", icon: <Zap size={12} className="fill-emerald-700" />, label: "Live" };
 };
 
-function SpaceItem({ space, index, navigate, onToggle, onDelete }: any) {
+function SpaceItem({ space, index, navigate, onToggle, onDelete, surge }: any) {
   const status = getStatusDisplay(space);
 
   return (
-    <motion.div 
-      layout 
-      initial={{ opacity: 0, y: 10 }} 
-      animate={{ opacity: 1, y: 0 }} 
-      exit={{ opacity: 0, scale: 0.95 }}
-      transition={{ delay: index * 0.05 }}
-    >
+    <motion.div layout initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }} transition={{ delay: index * 0.05 }}>
       <div 
         onClick={() => navigate(`/space-dashboard/${space.id}`)}
-        className={`
-          group relative flex flex-col md:flex-row items-stretch bg-white rounded-2xl border transition-all duration-200 cursor-pointer overflow-hidden
-          ${space.isActive 
-            ? 'border-slate-200 shadow-sm hover:shadow-xl hover:border-emerald-200' 
-            : 'border-slate-100 bg-slate-50/50 opacity-75 grayscale-[0.5]'}
-        `}
+        className={`group relative flex flex-col md:flex-row items-stretch bg-white rounded-2xl border transition-all duration-200 cursor-pointer overflow-hidden ${space.isActive ? 'border-slate-200 shadow-sm hover:shadow-xl hover:border-emerald-200' : 'border-slate-100 bg-slate-50/50 opacity-75 grayscale-[0.5]'}`}
       >
-        {/* Status Stripe */}
         <div className={`w-full md:w-2 h-2 md:h-auto ${space.isActive ? 'bg-emerald-500' : 'bg-slate-300'}`} />
 
         <div className="flex-1 p-6 flex flex-col md:flex-row md:items-center justify-between gap-8">
-          
-          {/* Info Block */}
           <div className="flex-1 min-w-0 space-y-3">
             <div className="flex items-center gap-3">
-              <h3 className="text-xl font-bold text-slate-900 truncate group-hover:text-emerald-700 transition-colors">
-                {space.title}
-              </h3>
-              
-              {/* Dynamic Status Badge */}
-              <span className={`flex items-center gap-1 text-[10px] px-2.5 py-1 rounded-full font-bold uppercase tracking-wider ${status.color}`}>
-                {status.icon} {status.label}
-              </span>
+              <h3 className="text-xl font-bold text-slate-900 truncate group-hover:text-emerald-700 transition-colors">{space.title}</h3>
+              <span className={`flex items-center gap-1 text-[10px] px-2.5 py-1 rounded-full font-bold uppercase tracking-wider ${status.color}`}>{status.icon} {status.label}</span>
+              {/* FLOOD SAFE BADGE */}
+              {space.isFloodSafe && <span className="flex items-center gap-1 text-[10px] px-2.5 py-1 rounded-full bg-blue-50 text-blue-600 font-bold uppercase tracking-wider"><ShieldCheck size={12} /> Flood Safe</span>}
             </div>
             
             <div className="flex items-center gap-2 text-base text-slate-500">
@@ -380,30 +445,28 @@ function SpaceItem({ space, index, navigate, onToggle, onDelete }: any) {
             </div>
 
             <div className="flex items-center gap-3">
-               <div className="flex items-center gap-1 text-xs font-semibold bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-100 text-slate-600">
-                  <ShieldCheck size={14} className="text-blue-500" /> {space.type}
-               </div>
-               
-               {/* NEW: Timing Badge */}
+               <div className="flex items-center gap-1 text-xs font-semibold bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-100 text-slate-600"><ShieldCheck size={14} className="text-blue-500" /> {space.type}</div>
                <div className="flex items-center gap-1 text-xs font-semibold bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-100 text-slate-600">
                   <Clock size={14} className="text-indigo-500" />
-                  {space.availabilityType === '24/7' 
-                    ? '24/7 Access' 
-                    : `${space.availableFrom?.slice(0,5)} - ${space.availableTo?.slice(0,5)}`
-                  }
+                  {space.availabilityType === '24/7' ? '24/7 Access' : `${space.availableFrom?.slice(0,5)} - ${space.availableTo?.slice(0,5)}`}
                </div>
-
-               <div className="flex items-center gap-1 text-xs font-semibold text-amber-600">
-                  <Star size={14} className="fill-amber-500" /> {space.rating}
-               </div>
+               <div className="flex items-center gap-1 text-xs font-semibold text-amber-600"><Star size={14} className="fill-amber-500" /> {space.rating}</div>
             </div>
           </div>
 
-          {/* Metrics Block */}
           <div className="flex items-center divide-x divide-slate-100 bg-slate-50/50 rounded-xl border border-slate-100 p-4 md:p-0 md:border-0 md:bg-transparent">
              <div className="px-6 text-center md:text-left">
                 <p className="text-xs uppercase font-bold text-slate-500 tracking-wider mb-1">Rate</p>
-                <p className="text-xl font-black text-slate-900">₹{space.price}<span className="text-sm text-slate-400 font-medium ml-1">/hr</span></p>
+                <div className="flex items-center gap-2">
+                    <p className="text-xl font-black text-slate-900">₹{space.livePrice || space.price}</p>
+                    {surge > 1.0 && (
+                        <div className="flex flex-col items-start">
+                            <span className="text-[10px] text-emerald-600 font-bold flex items-center"><TrendingUp size={10} className="mr-0.5"/> {surge}x</span>
+                            <span className="text-[10px] text-slate-400 line-through">₹{space.price}</span>
+                        </div>
+                    )}
+                </div>
+                <span className="text-sm text-slate-400 font-medium">/hr</span>
              </div>
              <div className="px-6 text-center md:text-left">
                 <p className="text-xs uppercase font-bold text-slate-500 tracking-wider mb-1">Bookings</p>
@@ -415,29 +478,21 @@ function SpaceItem({ space, index, navigate, onToggle, onDelete }: any) {
              </div>
           </div>
 
-          {/* Action Menu */}
           <div onClick={(e) => e.stopPropagation()} className="absolute top-4 right-4 md:static md:block">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-10 w-10 text-slate-300 hover:text-slate-900 hover:bg-slate-100 rounded-full">
-                  <MoreVertical size={20} />
-                </Button>
+                <Button variant="ghost" size="icon" className="h-10 w-10 text-slate-300 hover:text-slate-900 hover:bg-slate-100 rounded-full"><MoreVertical size={20} /></Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-52 p-1">
                 <DropdownMenuItem onClick={onToggle} className="cursor-pointer font-medium text-sm py-2.5 px-3">
                   {space.isActive ? <><ToggleLeft className="mr-3 h-4 w-4" /> Deactivate Listing</> : <><ToggleRight className="mr-3 h-4 w-4 text-emerald-600" /> Activate Listing</>}
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => navigate(`/register-space?edit=${space.id}`)} className="cursor-pointer font-medium text-sm py-2.5 px-3">
-                  <Edit className="mr-3 h-4 w-4" /> Edit Details
-                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => navigate(`/register-space?edit=${space.id}`)} className="cursor-pointer font-medium text-sm py-2.5 px-3"><Edit className="mr-3 h-4 w-4" /> Edit Details</DropdownMenuItem>
                 <div className="h-px bg-slate-100 my-1" />
-                <DropdownMenuItem onClick={onDelete} className="cursor-pointer font-medium text-sm py-2.5 px-3 text-red-600 focus:bg-red-50 focus:text-red-700">
-                  <Trash2 className="mr-3 h-4 w-4" /> Delete Listing
-                </DropdownMenuItem>
+                <DropdownMenuItem onClick={onDelete} className="cursor-pointer font-medium text-sm py-2.5 px-3 text-red-600 focus:bg-red-50 focus:text-red-700"><Trash2 className="mr-3 h-4 w-4" /> Delete Listing</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
-
         </div>
       </div>
     </motion.div>
