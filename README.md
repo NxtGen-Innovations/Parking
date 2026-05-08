@@ -123,7 +123,7 @@ public/                 # Static assets
 npm ci
 ```
 
-If your npm version enforces strict peer checks and installation fails due the QR reader package peer range, use:
+If your npm version enforces strict peer checks and installation fails due to the QR reader package peer range, use:
 ```bash
 npm ci --legacy-peer-deps
 ```
