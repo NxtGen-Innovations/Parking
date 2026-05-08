@@ -120,6 +120,11 @@ public/                 # Static assets
 
 ### Install
 ```bash
+npm ci
+```
+
+If your npm version enforces strict peer checks and installation fails due the QR reader package peer range, use:
+```bash
 npm ci --legacy-peer-deps
 ```
 
@@ -144,11 +149,6 @@ npm run build
 ```bash
 npm run lint
 ```
-
-## Current Build/Lint Status in This Branch
-
-- Build runs successfully with current source state.
-- Lint currently reports multiple pre-existing TypeScript/ESLint issues unrelated to this README update.
 
 ## Future Expansion Ideas
 
