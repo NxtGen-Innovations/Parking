@@ -9,7 +9,7 @@
 
 ## 📍 Live Project
 
-🔗 **[Visit ParkEase](https://github.com/NxtGen-Innovations/Parking)**
+🔗 **[Visit ParkEase](https://parking-jet.vercel.app/)**
 
 ---
 
